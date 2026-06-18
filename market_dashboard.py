@@ -9,8 +9,8 @@ import pytz
 # =========================
 # 🔐 텔레그램 설정 (Secrets에서 가져옴)
 # =========================
-TELEGRAM_TOKEN = ("8680217169:AAEsFlCloKbbVR40HxkoXtdZ6hLho9o1aGs")
-TELEGRAM_CHAT_ID = ("61473298612")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
