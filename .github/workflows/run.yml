@@ -1,25 +1,19 @@
 name: Supertrend Bot
-
 on:
   schedule:
     - cron: '30 21 * * 1-5'
   workflow_dispatch:
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
       - name: Python 설치
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - name: 패키지 설치
-        run: |
-          pip install yfinance pandas-ta requests schedule pytz lxml html5lib
-
+        run: pip install yfinance pandas-ta requests schedule pytz lxml html5lib
       - name: 봇 실행
         run: python Supertrend_bot.py
         env:
