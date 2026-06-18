@@ -13,10 +13,6 @@ jobs:
         with:
           python-version: '3.10'
       - name: 패키지 설치
-        run: |
-          pip install yfinance requests schedule pytz lxml html5lib
-          pip install git+https://github.com/twopirllc/pandas-ta.git@development
+        run: pip install yfinance requests pytz lxml html5lib numpy pandas
       - name: 봇 실행
         run: python Supertrend_bot.py
-        env:
-          PYTHONUNBUFFERED: '1'
