@@ -9,7 +9,7 @@ import pytz
 # =========================
 # 🔐 텔레그램 설정 (Secrets에서 가져옴)
 # =========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("8680217169")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram(message):
