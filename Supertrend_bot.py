@@ -57,7 +57,7 @@ def save_sent_signals(signals):
         pass
 
 # =========================
-# 📂 종목 관리
+# 📂 종목 관리 (위키피디아 크롤링 버그 픽스)
 # =========================
 UNIVERSE_FILE = 'universe.txt'
 
@@ -69,12 +69,19 @@ DEFAULT_TICKERS = [
 
 def load_universe_from_wiki():
     try:
-        # S&P 500 파싱
-        sp500_tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        # 브라우저 우회 헤더 추가 (위키피디아 차단 방지)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # S&P 500
+        res_sp = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", headers=headers, timeout=10)
+        sp500_tables = pd.read_html(res_sp.text)
         sp = sp500_tables[0]["Symbol"].tolist()
         
-        # Nasdaq 100 파싱 (테이블 인덱스가 바뀌어도 Ticker 컬럼을 찾아내도록 수정)
-        nasdaq_tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
+        # Nasdaq 100
+        res_nd = requests.get("https://en.wikipedia.org/wiki/Nasdaq-100", headers=headers, timeout=10)
+        nasdaq_tables = pd.read_html(res_nd.text)
         nd = []
         for table in nasdaq_tables:
             if "Ticker" in table.columns:
@@ -82,36 +89,34 @@ def load_universe_from_wiki():
                 break
                 
         tickers = list(set(sp + nd))
+        print(f"🌐 위키피디아 파싱 성공: 총 {len(tickers)}개 후보군 확보")
         return [str(t).replace(".", "-") for t in tickers]
     except Exception as e:
-        print(f"❌ 위키피디아 로드 실패: {e}")
+        print(f"❌ 위키피디아 파싱 실패: {e}")
         return DEFAULT_TICKERS
 
 # =========================
-# 🔧 yfinance 버전 호환 헬퍼 (핵심 수정)
+# 🔧 yfinance 버전 호환 헬퍼 (구조 최적화)
 # =========================
 def _get_df(data, ticker):
-    """yfinance group_by 구조에 상관없이 완벽하게 DataFrame을 추출합니다."""
     try:
         if data is None or data.empty:
             return None
             
-        # 단일 종목 (MultiIndex 아님)
-        if not isinstance(data.columns, pd.MultiIndex):
-            if 'Close' in data.columns:
-                return data.dropna()
-            return None
+        # yfinance 최신 버전의 MultiIndex (Level 1에 Ticker 존재) 안전하게 파싱
+        if isinstance(data.columns, pd.MultiIndex):
+            if ticker in data.columns.get_level_values(1):
+                df = data.xs(ticker, axis=1, level=1)
+            elif ticker in data.columns.get_level_values(0):
+                df = data[ticker]
+            else:
+                return None
+        else:
+            df = data
             
-        # 다중 종목 (MultiIndex)
-        # group_by="ticker" 일 때 Ticker는 Level 0에 위치함
-        if ticker in data.columns.get_level_values(0):
-            return data[ticker].dropna()
-            
-        # group_by="column" 일 때 Ticker는 Level 1에 위치함
-        if ticker in data.columns.get_level_values(1):
-            return data.xs(ticker, axis=1, level=1).dropna()
-            
-        return None
+        # 필수 컬럼만 살리고, 결측치가 있는 의미 없는 행 제거
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+        return df
     except:
         return None
 
@@ -121,10 +126,11 @@ def select_top_350():
     candidates = []
     batch_size = 50
 
-    for i in range(0, min(len(all_tickers), 500), batch_size):
+    for i in range(0, min(len(all_tickers), 600), batch_size):
         batch = all_tickers[i:i+batch_size]
         try:
-            data = yf.download(batch, period="2y", progress=False, group_by="ticker")
+            # group_by 파라미터 제거 (yfinance 버그 회피)
+            data = yf.download(batch, period="2y", progress=False)
             
             for ticker in batch:
                 df = _get_df(data, ticker)
@@ -137,7 +143,7 @@ def select_top_350():
                 
                 ma50 = df['Close'].rolling(50).mean().iloc[-1]
                 ma200 = df['Close'].rolling(200).mean().iloc[-1]
-                if ma50 < ma200 * 0.9:
+                if ma50 < ma200 * 0.9: # 200일선 대비 -10% 이상 하락한 초역배열 제외
                     continue
                     
                 candidates.append((ticker, df['Volume'].mean()))
@@ -146,11 +152,12 @@ def select_top_350():
             continue
         time.sleep(0.5)
 
+    # 거래량 순 정렬 후 상위 350개 추출
     candidates.sort(key=lambda x: x[1], reverse=True)
     result = [c[0] for c in candidates[:350]]
     
     if len(result) < 50:
-        raise ValueError(f"❌ 350개 선정 실패 (선정됨: {len(result)}개).")
+        raise ValueError(f"❌ 선정 실패 (선정됨: {len(result)}개). 데이터 다운로드 차단 또는 네트워크 이슈입니다.")
     
     return result
 
@@ -162,9 +169,9 @@ def get_universe():
                 print(f"📂 파일에서 로드: {len(tickers)}개")
                 return tickers
             else:
-                print(f"⚠️ 파일에 종목이 부족하여 재선정합니다.")
+                print(f"⚠️ 파일 내 종목 수 부족 ({len(tickers)}개). 재선정합니다.")
 
-    print("📁 350개 새로 선정 중...")
+    print("📁 350개 유니버스 새로 선정 중...")
     tickers = select_top_350()
     save_universe(tickers)
     return tickers
@@ -175,7 +182,7 @@ def save_universe(tickers):
     print(f"💾 {len(tickers)}개 저장 완료")
 
 # =========================
-# 📈 지표 계산 (Supertrend / Pullback / Breakout)
+# 📈 지표 계산
 # =========================
 def supertrend(df, period=10, mult=3):
     high = df["High"].values.astype(float)
@@ -267,8 +274,8 @@ def scan(tickers):
         batch = tickers[i:i+chunk_size]
 
         try:
-            data = yf.download(batch, period="3mo", interval="1d",
-                               group_by="ticker", progress=False)
+            # group_by 파라미터 제거
+            data = yf.download(batch, period="3mo", interval="1d", progress=False)
         except Exception as e:
             print(f"⚠️ 배치 다운로드 실패: {e}")
             continue
@@ -316,7 +323,7 @@ def scan(tickers):
             except Exception as e:
                 continue
 
-        time.sleep(1)
+        time.sleep(0.5)
 
     save_sent_signals(sent_signals)
 
@@ -324,16 +331,16 @@ def scan(tickers):
     if unique > 0:
         summary = f"📊 *스캔 완료*\n신호: {unique}개\n⏰ {get_us_time().strftime('%H:%M')} EST"
         send_telegram(summary)
-        print(f"  📊 총 {unique}개 신호 발견")
+        print(f"  📊 총 {unique}개 신호 발견 및 전송 완료")
     else:
-        print("  📊 신호 없음")
+        print("  📊 새로운 신호 없음")
 
 # =========================
 # 🚀 메인 (1회 실행)
 # =========================
 if __name__ == "__main__":
     print("=" * 50)
-    print("🚀 Supertrend 스캐너 v3.2 (버그 픽스)")
+    print("🚀 Supertrend 스캐너 v3.3 (위키피디아 픽스)")
     print("=" * 50)
 
     try:
@@ -345,8 +352,8 @@ if __name__ == "__main__":
             print("📈 장중 스캔 실행")
             scan(tickers)
         else:
-            print("🌙 장마감 - 종목 업데이트 (또는 로컬 스캔 테스트)")
-            scan(tickers) # 테스트를 위해 장마감이어도 일단 스캔이 돌아가게 할 경우 유지 (원치 않으면 주석 처리)
+            print("🌙 장마감 - 로컬 스캔 테스트")
+            scan(tickers) # 테스트를 위해 장마감 상태여도 스캔이 돌아가게 세팅되어 있습니다.
 
         print("✅ 프로세스 완료")
     except Exception as e:
