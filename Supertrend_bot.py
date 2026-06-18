@@ -1,21 +1,22 @@
 import os
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import requests
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, date
 import pytz
 
 # =========================
-# 🔐 텔레그램 설정 (환경변수 - 보안)
+# 🔐 텔레그램 설정
 # =========================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ 텔레그램 토큰 없음")
+        print("⚠️ 텔레그램 토큰 없음 (테스트 모드)")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -24,88 +25,104 @@ def send_telegram(message):
             "text": message,
             "parse_mode": "Markdown"
         }, timeout=5)
-        print("📨 텔레그램 전송 완료")
+        print("📨 전송 완료")
     except Exception as e:
         print(f"❌ 전송 실패: {e}")
 
 # =========================
-# 📂 신호 중복 방지 (파일 저장 - 날짜별)
+# 📂 신호 중복 방지
 # =========================
 SIGNALS_FILE = "sent_signals.json"
 
 def load_sent_signals():
+    today = str(date.today())
     if os.path.exists(SIGNALS_FILE):
         try:
             with open(SIGNALS_FILE, 'r') as f:
-                return set(tuple(x) for x in json.load(f))
+                data = json.load(f)
+                if data.get("date") == today:
+                    return set(tuple(x) for x in data.get("signals", []))
         except:
-            return set()
+            pass
     return set()
 
 def save_sent_signals(signals):
     try:
         with open(SIGNALS_FILE, 'w') as f:
-            json.dump(list(signals), f)
+            json.dump({
+                "date": str(date.today()),
+                "signals": list(signals)
+            }, f)
     except:
         pass
 
 # =========================
-# 📂 350개 종목 관리
+# 📂 종목 관리
 # =========================
 UNIVERSE_FILE = 'universe.txt'
+
+DEFAULT_TICKERS = [
+    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA',
+    'AMD', 'MU', 'AVGO', 'QQQ', 'SPY', 'IWM', 'SOXX'
+]
 
 def load_universe_from_wiki():
     try:
         sp500 = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
         nasdaq100 = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")[4]
-        russell = pd.read_html("https://en.wikipedia.org/wiki/Russell_2000_Index")[0]
-        
         sp = sp500["Symbol"].tolist()
         nd = nasdaq100.iloc[:, 0].tolist()
-        ru = russell[russell.columns[0]].tolist()
-        
-        tickers = list(set(sp + nd + ru))
+        tickers = list(set(sp + nd))
         return [t.replace(".", "-") for t in tickers]
     except Exception as e:
         print(f"❌ 유니버스 로드 실패: {e}")
-        return ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'TSLA', 'AMZN', 'META']
+        return DEFAULT_TICKERS
 
 def select_top_350():
     print("🔄 350개 종목 선정 중...")
     all_tickers = load_universe_from_wiki()
     candidates = []
-    
-    for ticker in all_tickers[:1000]:
+    batch_size = 50
+
+    for i in range(0, min(len(all_tickers), 500), batch_size):
+        batch = all_tickers[i:i+batch_size]
         try:
-            df = yf.download(ticker, period="1y", progress=False)
-            if len(df) < 200:
-                continue
-            if df['Volume'].mean() < 500000:
-                continue
-            if df['Close'].iloc[-1] < 5:
-                continue
-            
-            ma50 = df['Close'].rolling(50).mean().iloc[-1]
-            ma200 = df['Close'].rolling(200).mean().iloc[-1]
-            if ma50 < ma200 * 0.9:
-                continue
-            
-            candidates.append((ticker, df['Volume'].mean()))
-        except:
+            data = yf.download(batch, period="1y", progress=False,
+                             group_by="ticker", auto_adjust=True)
+            for ticker in batch:
+                try:
+                    df = _get_df(data, ticker, batch)
+                    if df is None or len(df) < 200:
+                        continue
+                    if df['Volume'].mean() < 500000:
+                        continue
+                    if df['Close'].iloc[-1] < 5:
+                        continue
+                    ma50 = df['Close'].rolling(50).mean().iloc[-1]
+                    ma200 = df['Close'].rolling(200).mean().iloc[-1]
+                    if ma50 < ma200 * 0.9:
+                        continue
+                    candidates.append((ticker, df['Volume'].mean()))
+                except:
+                    continue
+        except Exception as e:
+            print(f"⚠️ 배치 실패: {e}")
             continue
-        time.sleep(0.3)
-    
+        time.sleep(0.5)
+
     candidates.sort(key=lambda x: x[1], reverse=True)
-    return [c[0] for c in candidates[:350]]
+    result = [c[0] for c in candidates[:350]]
+    return result if result else DEFAULT_TICKERS
 
 def get_universe():
+    """universe.txt가 없으면 350개 새로 선정"""
     if os.path.exists(UNIVERSE_FILE):
         with open(UNIVERSE_FILE, 'r') as f:
             tickers = f.read().splitlines()
-            print(f"📂 파일에서 350개 로드: {len(tickers)}개")
-            return tickers
-    
-    print("📁 파일 없음 → 새로 선정")
+            if tickers:
+                print(f"📂 파일에서 로드: {len(tickers)}개")
+                return tickers
+    print("📁 파일 없음 → 350개 새로 선정")
     tickers = select_top_350()
     save_universe(tickers)
     return tickers
@@ -113,48 +130,77 @@ def get_universe():
 def save_universe(tickers):
     with open(UNIVERSE_FILE, 'w') as f:
         f.write('\n'.join(tickers))
-    print(f"💾 350개 저장 완료")
+    print(f"💾 {len(tickers)}개 저장 완료")
 
 # =========================
-# 📈 Supertrend (밴드 조정 포함)
+# 🔧 yfinance 버전 호환 헬퍼
+# =========================
+def _get_df(data, ticker, batch):
+    """yfinance 버전 무관하게 df 추출"""
+    try:
+        if len(batch) == 1:
+            return data.dropna()
+        if isinstance(data.columns, pd.MultiIndex):
+            if ticker not in data.columns.get_level_values(1):
+                return None
+            return data.xs(ticker, axis=1, level=1).dropna()
+        else:
+            if ticker not in data:
+                return None
+            return data[ticker].dropna()
+    except:
+        return None
+
+# =========================
+# 📈 Supertrend (numpy 최적화 + TR 버그 수정)
 # =========================
 def supertrend(df, period=10, mult=3):
-    high, low, close = df["High"], df["Low"], df["Close"]
-    
-    tr = pd.concat([
+    high = df["High"].values.astype(float)
+    low = df["Low"].values.astype(float)
+    close = df["Close"].values.astype(float)
+    n = len(df)
+
+    prev_close = np.empty(n)
+    prev_close[0] = close[0]
+    prev_close[1:] = close[:-1]
+
+    tr = np.maximum(
         high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs()
-    ], axis=1).max(axis=1)
-    
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+        np.maximum(
+            np.abs(high - prev_close),
+            np.abs(low - prev_close)
+        )
+    )
+    tr[0] = high[0] - low[0]
+
+    atr = pd.Series(tr).ewm(alpha=1/period, adjust=False).mean().values
     hl2 = (high + low) / 2
     upper = hl2 + mult * atr
     lower = hl2 - mult * atr
-    
+
     final_upper = upper.copy()
     final_lower = lower.copy()
-    
-    for i in range(1, len(df)):
-        if close.iloc[i-1] <= final_upper.iloc[i-1]:
-            final_upper.iloc[i] = min(upper.iloc[i], final_upper.iloc[i-1])
+    trend = np.ones(n, dtype=bool)
+
+    for i in range(1, n):
+        if close[i-1] <= final_upper[i-1]:
+            final_upper[i] = min(upper[i], final_upper[i-1])
         else:
-            final_upper.iloc[i] = upper.iloc[i]
-            
-        if close.iloc[i-1] >= final_lower.iloc[i-1]:
-            final_lower.iloc[i] = max(lower.iloc[i], final_lower.iloc[i-1])
+            final_upper[i] = upper[i]
+
+        if close[i-1] >= final_lower[i-1]:
+            final_lower[i] = max(lower[i], final_lower[i-1])
         else:
-            final_lower.iloc[i] = lower.iloc[i]
-    
-    trend = [True]
-    for i in range(1, len(df)):
-        if close.iloc[i] > final_upper.iloc[i-1]:
-            trend.append(True)
-        elif close.iloc[i] < final_lower.iloc[i-1]:
-            trend.append(False)
+            final_lower[i] = lower[i]
+
+        if close[i] > final_upper[i-1]:
+            trend[i] = True
+        elif close[i] < final_lower[i-1]:
+            trend[i] = False
         else:
-            trend.append(trend[-1])
-    
+            trend[i] = trend[i-1]
+
+    df = df.copy()
     df["trend"] = trend
     return df
 
@@ -184,104 +230,98 @@ def is_market_open():
     return open_time <= now <= close_time
 
 # =========================
-# 🔍 스캔 (중복 방지 + 날짜 저장)
+# 🔍 스캔
 # =========================
 def scan(tickers):
-    global sent_signals
-    today = datetime.now(pytz.timezone('US/Eastern')).date().isoformat()
+    sent_signals = load_sent_signals()
+    today = str(date.today())
     print(f"📈 {len(tickers)}개 스캔 중... (오늘: {today})")
-    
+
     chunk_size = 50
     signals_found = []
-    
+
     for i in range(0, len(tickers), chunk_size):
         batch = tickers[i:i+chunk_size]
-        
+
         try:
-            data = yf.download(batch, period="3mo", interval="1d", 
-                             group_by="ticker", auto_adjust=True, 
+            data = yf.download(batch, period="3mo", interval="1d",
+                             group_by="ticker", auto_adjust=True,
                              threads=True, progress=False)
         except Exception as e:
             print(f"⚠️ 배치 다운로드 실패: {e}")
             continue
-        
+
         for ticker in batch:
             try:
-                if ticker not in data:
+                df = _get_df(data, ticker, batch)
+                if df is None or len(df) < 60:
                     continue
-                
-                df = data[ticker].dropna()
-                if len(df) < 60:
-                    continue
-                
+
                 df = supertrend(df)
-                price = df['Close'].iloc[-1]
-                now = get_us_time()
-                
-                # 🔥 중복 방지 키 생성 (종목 + 신호타입 + 날짜)
-                # 1️⃣ Supertrend
+                price = float(df['Close'].iloc[-1])
+                now_time = get_us_time()
+
                 st_key = (ticker, "ST", today)
                 if st_key not in sent_signals:
-                    if df["trend"].iloc[-2] == False and df["trend"].iloc[-1] == True:
-                        msg = f"🔄 *{ticker}*\n💰 ${price:.2f}\n📈 Supertrend 상승전환\n⏰ {now.strftime('%H:%M')} EST"
+                    if not df["trend"].iloc[-2] and df["trend"].iloc[-1]:
+                        msg = f"🔄 *{ticker}*\n💰 ${price:.2f}\n📈 Supertrend 상승전환\n⏰ {now_time.strftime('%H:%M')} EST"
                         send_telegram(msg)
                         sent_signals.add(st_key)
                         signals_found.append(ticker)
-                
-                # 2️⃣ 눌림목
+                        print(f"  🔄 {ticker} ST전환 ${price:.2f}")
+
                 pull_key = (ticker, "PULL", today)
                 if pull_key not in sent_signals:
                     if check_pullback(df):
-                        msg = f"📉 *{ticker}*\n💰 ${price:.2f}\n📈 20일 눌림목\n⏰ {now.strftime('%H:%M')} EST"
+                        msg = f"📉 *{ticker}*\n💰 ${price:.2f}\n📈 20일 눌림목\n⏰ {now_time.strftime('%H:%M')} EST"
                         send_telegram(msg)
                         sent_signals.add(pull_key)
                         signals_found.append(ticker)
-                
-                # 3️⃣ 돌파
+                        print(f"  📉 {ticker} 눌림목 ${price:.2f}")
+
                 break_key = (ticker, "BREAK", today)
                 if break_key not in sent_signals:
                     if check_breakout(df):
-                        msg = f"🚀 *{ticker}*\n💰 ${price:.2f}\n📈 전고점 돌파\n⏰ {now.strftime('%H:%M')} EST"
+                        msg = f"🚀 *{ticker}*\n💰 ${price:.2f}\n📈 전고점 돌파\n⏰ {now_time.strftime('%H:%M')} EST"
                         send_telegram(msg)
                         sent_signals.add(break_key)
                         signals_found.append(ticker)
-                        
+                        print(f"  🚀 {ticker} 돌파 ${price:.2f}")
+
             except Exception as e:
                 continue
-        
+
         time.sleep(1)
-    
-    # 저장
+
     save_sent_signals(sent_signals)
-    
-    if signals_found:
-        print(f"  📊 총 {len(set(signals_found))}개 신호 발견")
+
+    unique = len(set(signals_found))
+    if unique > 0:
+        summary = f"📊 *스캔 완료*\n신호: {unique}개\n⏰ {get_us_time().strftime('%H:%M')} EST"
+        send_telegram(summary)
+        print(f"  📊 총 {unique}개 신호 발견")
     else:
         print("  📊 신호 없음")
 
 # =========================
-# 🚀 메인 (1회 실행 후 종료)
+# 🚀 메인 (1회 실행)
 # =========================
 if __name__ == "__main__":
-    global sent_signals
-    sent_signals = load_sent_signals()
-    
     print("=" * 50)
-    print("🚀 1시간 간격 스캐너 (1회 실행)")
+    print("🚀 Supertrend 스캐너 v3.0")
     print("=" * 50)
-    
+
     tickers = get_universe()
     now = get_us_time()
-    
+    print(f"⏰ 현재 미국 동부 시간: {now.strftime('%Y-%m-%d %H:%M')} EST")
+
     if is_market_open():
-        print(f"📈 장중 스캔 실행 ({now.strftime('%H:%M')} EST)")
+        print("📈 장중 스캔 실행")
         scan(tickers)
     else:
-        print(f"🌙 장마감 - 350개 업데이트 ({now.strftime('%H:%M')} EST)")
-        tickers = select_top_350()
-        save_universe(tickers)
-        send_telegram(f"🌙 내일 스캔 대상 {len(tickers)}개 선정 완료")
-        # 업데이트했으니 내일을 위해 신호 초기화? (선택)
-        # sent_signals = set()  # 필요시 주석 해제
-    
+        print("🌙 장마감 - 종목 업데이트")
+        new_tickers = select_top_350()
+        save_universe(new_tickers)
+        send_telegram(f"🌙 내일 스캔 대상 {len(new_tickers)}개 선정 완료")
+
     print("✅ 완료 - 종료")
