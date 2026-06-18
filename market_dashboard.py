@@ -1,16 +1,24 @@
 import os
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import requests
+import json
 import time
-from datetime import datetime
+import re
+from datetime import datetime, date
 import pytz
 
 # =========================
-# 🔐 텔레그램 설정 (Secrets에서 가져옴)
+# 🔐 텔레그램 설정
 # =========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+def escape_markdown(text):
+    """텔레그램 MarkdownV2 특수문자 이스케이프"""
+    special_chars = r'([_*\[\]()~`>#+\-=|{}.!])'
+    return re.sub(special_chars, r'\\\1', text)
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -18,55 +26,118 @@ def send_telegram(message):
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        requests.post(url, data={
+        response = requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "Markdown"
+            "parse_mode": "MarkdownV2",
+            "disable_web_page_preview": True
         }, timeout=5)
-        print("📨 텔레그램 전송 완료")
+        if response.status_code == 200:
+            print("📨 전송 완료")
+        else:
+            print(f"⚠️ Markdown 실패, 일반 텍스트 재전송")
+            requests.post(url, data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message,
+                "disable_web_page_preview": True
+            }, timeout=5)
     except Exception as e:
         print(f"❌ 전송 실패: {e}")
 
 # =========================
-# 📊 SuperTrend 계산
+# 🔧 yfinance 버전 호환 헬퍼
+# =========================
+def _get_close_series(data, ticker):
+    """yfinance 버전 무관하게 Close 시리즈 추출"""
+    try:
+        if isinstance(data, pd.Series):
+            return data
+        if isinstance(data, pd.DataFrame):
+            if 'Close' in data.columns:
+                return data['Close']
+            if isinstance(data.columns, pd.MultiIndex):
+                if ticker in data.columns.get_level_values(1):
+                    return data.xs(ticker, axis=1, level=1)['Close']
+        return None
+    except:
+        return None
+
+def _get_full_df(data, ticker):
+    """yfinance 버전 무관하게 전체 DataFrame 추출"""
+    try:
+        if isinstance(data, pd.DataFrame):
+            if 'Open' in data.columns:
+                return data
+            if isinstance(data.columns, pd.MultiIndex):
+                if ticker in data.columns.get_level_values(1):
+                    return data.xs(ticker, axis=1, level=1)
+        return None
+    except:
+        return None
+
+# =========================
+# 📈 Supertrend (numpy 최적화)
 # =========================
 def calculate_supertrend(df, period=10, mult=3):
-    high, low, close = df["High"], df["Low"], df["Close"]
-    
-    tr = pd.concat([
+    high = df["High"].values.astype(float)
+    low = df["Low"].values.astype(float)
+    close = df["Close"].values.astype(float)
+    n = len(df)
+
+    prev_close = np.empty(n)
+    prev_close[0] = close[0]
+    prev_close[1:] = close[:-1]
+
+    tr = np.maximum(
         high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs()
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+        np.maximum(
+            np.abs(high - prev_close),
+            np.abs(low - prev_close)
+        )
+    )
+    tr[0] = high[0] - low[0]
+
+    atr = pd.Series(tr).ewm(alpha=1/period, adjust=False).mean().values
     hl2 = (high + low) / 2
     upper = hl2 + mult * atr
     lower = hl2 - mult * atr
-    
-    trend = [True]
-    for i in range(1, len(df)):
-        if close.iloc[i] > upper.iloc[i-1]:
-            trend.append(True)
-        elif close.iloc[i] < lower.iloc[i-1]:
-            trend.append(False)
+
+    final_upper = upper.copy()
+    final_lower = lower.copy()
+    trend = np.ones(n, dtype=bool)
+
+    for i in range(1, n):
+        if close[i-1] <= final_upper[i-1]:
+            final_upper[i] = min(upper[i], final_upper[i-1])
         else:
-            trend.append(trend[-1])
-    
-    df['trend'] = trend
-    return df
+            final_upper[i] = upper[i]
+
+        if close[i-1] >= final_lower[i-1]:
+            final_lower[i] = max(lower[i], final_lower[i-1])
+        else:
+            final_lower[i] = lower[i]
+
+        if close[i] > final_upper[i-1]:
+            trend[i] = True
+        elif close[i] < final_lower[i-1]:
+            trend[i] = False
+        else:
+            trend[i] = trend[i-1]
+
+    return trend
 
 # =========================
-# 📈 이평선 정배열 + SuperTrend 신호
+# 📊 이평선 정배열 + SuperTrend 신호
 # =========================
 def get_trend_signal(df):
-    if len(df) < 200:
+    if len(df) < 250:
         return "데이터 부족", "❌", "", ""
-    
-    # 이평선
+
+    # 이평선 (200일선 안정적으로 계산)
     ma20 = df['Close'].rolling(20).mean().iloc[-1]
     ma50 = df['Close'].rolling(50).mean().iloc[-1]
     ma200 = df['Close'].rolling(200).mean().iloc[-1]
-    
+
     if ma20 > ma50 > ma200:
         ma_status, ma_emoji = "완전 정배열", "✅"
     elif ma20 > ma50:
@@ -75,20 +146,20 @@ def get_trend_signal(df):
         ma_status, ma_emoji = "역배열", "❌"
     else:
         ma_status, ma_emoji = "혼재", "⚪"
-    
+
     # SuperTrend
-    df = calculate_supertrend(df)
-    
+    trend = calculate_supertrend(df)
+
     signal = ""
     signal_emoji = ""
-    if len(df) >= 3:
-        if df['trend'].iloc[-2] == False and df['trend'].iloc[-1] == True:
+    if len(trend) >= 3:
+        if not trend[-2] and trend[-1]:
             signal = "🟢 SuperTrend 상승전환"
             signal_emoji = "🟢"
-        elif df['trend'].iloc[-2] == True and df['trend'].iloc[-1] == False:
+        elif trend[-2] and not trend[-1]:
             signal = "🔴 SuperTrend 하락전환"
             signal_emoji = "🔴"
-    
+
     return ma_status, ma_emoji, signal, signal_emoji
 
 # =========================
@@ -136,23 +207,31 @@ def get_global_dashboard():
         'TLT': '장기채 ETF',
         'BTC-USD': '비트코인',
     }
-    
+
     results = {}
     print(f"📊 {len(tickers)}개 데이터 수집 중...")
-    
+
     for ticker, name in tickers.items():
         try:
-            df = yf.download(ticker, period="1y", progress=False)
-            if len(df) < 50:
+            # 2년치 데이터로 변경 (200일선 안정적 계산)
+            df = yf.download(ticker, period="2y", progress=False, auto_adjust=True)
+
+            # 싱글 티커 처리 (MultiIndex 대응)
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df.xs(ticker, axis=1, level=1) if ticker in df.columns.get_level_values(1) else None
+            else:
+                df = df if not df.empty else None
+
+            if df is None or len(df) < 250:
                 results[ticker] = {'name': name, 'error': '데이터 부족'}
                 continue
-            
+
             current = df['Close'].iloc[-1]
             prev = df['Close'].iloc[-2]
             change = ((current / prev) - 1) * 100
-            
+
             ma_status, ma_emoji, signal, signal_emoji = get_trend_signal(df)
-            
+
             results[ticker] = {
                 'name': name,
                 'price': current,
@@ -165,7 +244,7 @@ def get_global_dashboard():
         except Exception as e:
             results[ticker] = {'name': name, 'error': str(e)[:30]}
         time.sleep(0.3)
-    
+
     return results
 
 # =========================
@@ -173,11 +252,11 @@ def get_global_dashboard():
 # =========================
 def format_dashboard(results):
     now = datetime.now(pytz.timezone('US/Eastern'))
-    
+
     msg = "🌏 *글로벌 매크로 대시보드*\n"
-    msg += f"⏰ {now.strftime('%Y-%m-%d %H:%M')} EST\n"
+    msg += f"⏰ {escape_markdown(now.strftime('%Y-%m-%d %H:%M'))} EST\n"
     msg += "=" * 30 + "\n\n"
-    
+
     # 미국 지수
     msg += "📈 *미국 주요 지수*\n"
     for t in ['SPY', 'QQQ', 'DIA', 'IWM']:
@@ -191,7 +270,7 @@ def format_dashboard(results):
                 msg += f" [{r['signal_emoji']} {r['signal']}]"
             msg += "\n"
     msg += "\n"
-    
+
     # 유럽 지수
     msg += "🌏 *유럽 주요 지수*\n"
     for t in ['VGK', 'EWU', 'EWQ', 'EWG']:
@@ -205,7 +284,7 @@ def format_dashboard(results):
                 msg += f" [{r['signal_emoji']} {r['signal']}]"
             msg += "\n"
     msg += "\n"
-    
+
     # 아시아 지수
     msg += "🌏 *아시아 주요 지수*\n"
     for t in ['EWJ', 'EWY', 'EWT']:
@@ -219,7 +298,7 @@ def format_dashboard(results):
                 msg += f" [{r['signal_emoji']} {r['signal']}]"
             msg += "\n"
     msg += "\n"
-    
+
     # 섹터
     msg += "🏭 *미국 섹터 흐름*\n"
     sector_list = ['XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLB', 'XLU', 'XLY', 'XLP', 'XLRE']
@@ -233,8 +312,8 @@ def format_dashboard(results):
                 msg += f" [{r['signal_emoji']} {r['signal']}]"
             msg += "\n"
     msg += "\n"
-    
-    # 거시
+
+    # 거시 지표
     msg += "🌍 *거시 지표*\n"
     if '^VIX' in results and 'error' not in results['^VIX']:
         vix = results['^VIX']['price']
@@ -243,11 +322,11 @@ def format_dashboard(results):
     if 'BTC-USD' in results and 'error' not in results['BTC-USD']:
         r = results['BTC-USD']
         msg += f"₿ 비트코인: ${r['price']:,.0f} ({r['change']:+.2f}%)\n"
-    
+
     # SuperTrend 신호 요약
     msg += "\n" + "=" * 30 + "\n"
     msg += "🚨 *SuperTrend 추세전환 신호*\n"
-    
+
     buy_signals = []
     sell_signals = []
     for t, r in results.items():
@@ -256,20 +335,48 @@ def format_dashboard(results):
                 buy_signals.append(f"🟢 {r['name']}")
             elif '하락전환' in r['signal']:
                 sell_signals.append(f"🔴 {r['name']}")
-    
+
     if buy_signals:
         msg += "📈 매수 신호:\n" + "\n".join(buy_signals[:5]) + "\n"
     if sell_signals:
         msg += "📉 매도 신호:\n" + "\n".join(sell_signals[:5]) + "\n"
-    
+
     return msg
 
 # =========================
 # 🚀 실행
 # =========================
 if __name__ == "__main__":
-    print("🌏 글로벌 대시보드 생성 중...")
+    print("=" * 50)
+    print("🌏 글로벌 매크로 대시보드 v3.0")
+    print("=" * 50)
+
     results = get_global_dashboard()
     msg = format_dashboard(results)
-    send_telegram(msg)
+
+    # 4096자 제한 처리 (텔레그램 메시지 길이 제한)
+    if len(msg) > 4000:
+        # 요약만 보내기
+        summary = "📊 *대시보드 요약*\n"
+        summary += "=" * 20 + "\n\n"
+
+        # SuperTrend 신호만 추출
+        buy_signals = []
+        sell_signals = []
+        for t, r in results.items():
+            if r and 'error' not in r and r.get('signal'):
+                if '상승전환' in r['signal']:
+                    buy_signals.append(f"🟢 {r['name']}")
+                elif '하락전환' in r['signal']:
+                    sell_signals.append(f"🔴 {r['name']}")
+
+        if buy_signals:
+            summary += "📈 매수 신호:\n" + "\n".join(buy_signals[:3]) + "\n\n"
+        if sell_signals:
+            summary += "📉 매도 신호:\n" + "\n".join(sell_signals[:3]) + "\n"
+
+        send_telegram(summary)
+    else:
+        send_telegram(msg)
+
     print("✅ 전송 완료")
