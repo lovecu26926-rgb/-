@@ -11,9 +11,11 @@ jobs:
       - name: Python 설치
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.10'
       - name: 패키지 설치
-        run: pip install yfinance pandas-ta requests schedule pytz lxml html5lib
+        run: |
+          pip install yfinance requests schedule pytz lxml html5lib
+          pip install git+https://github.com/twopirllc/pandas-ta.git@development
       - name: 봇 실행
         run: python Supertrend_bot.py
         env:
