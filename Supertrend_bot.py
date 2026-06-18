@@ -26,7 +26,6 @@ def send_telegram(message):
             "parse_mode": "Markdown",
             "disable_web_page_preview": True
         }, timeout=5)
-        print("📨 전송 완료")
     except Exception as e:
         print(f"❌ 전송 실패: {e}")
 
@@ -62,28 +61,59 @@ def save_sent_signals(signals):
 # =========================
 UNIVERSE_FILE = 'universe.txt'
 
-# 🔥 확장된 기본 리스트 (비상용)
 DEFAULT_TICKERS = [
     'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA',
     'AMD', 'MU', 'AVGO', 'QQQ', 'SPY', 'IWM', 'SOXX',
-    'JPM', 'V', 'WMT', 'PG', 'JNJ', 'UNH', 'HD',
-    'DIS', 'MA', 'BAC', 'CVX', 'XOM', 'PFE', 'ABT',
-    'NKE', 'COST', 'CRM', 'ADBE', 'NFLX', 'INTC', 'CSCO',
-    'PEP', 'KO', 'MRK', 'MCD', 'ACN', 'NOW', 'TXN',
-    'QCOM', 'AMAT', 'LRCX', 'KLAC', 'SNPS', 'CDNS'
+    'JPM', 'V', 'WMT', 'PG', 'JNJ', 'UNH', 'HD'
 ]
 
 def load_universe_from_wiki():
     try:
-        sp500 = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-        nasdaq100 = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")[4]
-        sp = sp500["Symbol"].tolist()
-        nd = nasdaq100.iloc[:, 0].tolist()
+        # S&P 500 파싱
+        sp500_tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        sp = sp500_tables[0]["Symbol"].tolist()
+        
+        # Nasdaq 100 파싱 (테이블 인덱스가 바뀌어도 Ticker 컬럼을 찾아내도록 수정)
+        nasdaq_tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
+        nd = []
+        for table in nasdaq_tables:
+            if "Ticker" in table.columns:
+                nd = table["Ticker"].tolist()
+                break
+                
         tickers = list(set(sp + nd))
-        return [t.replace(".", "-") for t in tickers]
+        return [str(t).replace(".", "-") for t in tickers]
     except Exception as e:
-        print(f"❌ 유니버스 로드 실패: {e}")
+        print(f"❌ 위키피디아 로드 실패: {e}")
         return DEFAULT_TICKERS
+
+# =========================
+# 🔧 yfinance 버전 호환 헬퍼 (핵심 수정)
+# =========================
+def _get_df(data, ticker):
+    """yfinance group_by 구조에 상관없이 완벽하게 DataFrame을 추출합니다."""
+    try:
+        if data is None or data.empty:
+            return None
+            
+        # 단일 종목 (MultiIndex 아님)
+        if not isinstance(data.columns, pd.MultiIndex):
+            if 'Close' in data.columns:
+                return data.dropna()
+            return None
+            
+        # 다중 종목 (MultiIndex)
+        # group_by="ticker" 일 때 Ticker는 Level 0에 위치함
+        if ticker in data.columns.get_level_values(0):
+            return data[ticker].dropna()
+            
+        # group_by="column" 일 때 Ticker는 Level 1에 위치함
+        if ticker in data.columns.get_level_values(1):
+            return data.xs(ticker, axis=1, level=1).dropna()
+            
+        return None
+    except:
+        return None
 
 def select_top_350():
     print("🔄 350개 종목 선정 중...")
@@ -94,43 +124,37 @@ def select_top_350():
     for i in range(0, min(len(all_tickers), 500), batch_size):
         batch = all_tickers[i:i+batch_size]
         try:
-            data = yf.download(batch, period="2y", progress=False,
-                             group_by="ticker", auto_adjust=True)
+            data = yf.download(batch, period="2y", progress=False, group_by="ticker")
+            
             for ticker in batch:
-                try:
-                    df = _get_df(data, ticker, batch)
-                    if df is None or len(df) < 250:
-                        continue
-                    if df['Volume'].mean() < 500000:
-                        continue
-                    if df['Close'].iloc[-1] < 5:
-                        continue
-                    ma50 = df['Close'].rolling(50).mean().iloc[-1]
-                    ma200 = df['Close'].rolling(200).mean().iloc[-1]
-                    if ma50 < ma200 * 0.9:
-                        continue
-                    candidates.append((ticker, df['Volume'].mean()))
-                except:
+                df = _get_df(data, ticker)
+                if df is None or len(df) < 250:
                     continue
+                if df['Volume'].mean() < 500000:
+                    continue
+                if df['Close'].iloc[-1] < 5:
+                    continue
+                
+                ma50 = df['Close'].rolling(50).mean().iloc[-1]
+                ma200 = df['Close'].rolling(200).mean().iloc[-1]
+                if ma50 < ma200 * 0.9:
+                    continue
+                    
+                candidates.append((ticker, df['Volume'].mean()))
         except Exception as e:
-            print(f"⚠️ 배치 실패: {e}")
+            print(f"⚠️ 배치 실패 ({batch[0]}~): {e}")
             continue
         time.sleep(0.5)
 
     candidates.sort(key=lambda x: x[1], reverse=True)
     result = [c[0] for c in candidates[:350]]
     
-    # 🔥 350개 선정 실패 시 오류 발생 (DEFAULT_TICKERS 방지)
     if len(result) < 50:
-        raise ValueError(f"❌ 350개 선정 실패 (선정됨: {len(result)}개). 네트워크/위키피디아를 확인하세요.")
+        raise ValueError(f"❌ 350개 선정 실패 (선정됨: {len(result)}개).")
     
     return result
 
 def get_universe():
-    """
-    universe.txt가 없거나 50개 미만이면 350개 새로 선정
-    """
-    # 1. 파일 확인
     if os.path.exists(UNIVERSE_FILE):
         with open(UNIVERSE_FILE, 'r') as f:
             tickers = f.read().splitlines()
@@ -138,9 +162,8 @@ def get_universe():
                 print(f"📂 파일에서 로드: {len(tickers)}개")
                 return tickers
             else:
-                print(f"⚠️ 파일에 종목이 {len(tickers)}개뿐 → 재선정")
+                print(f"⚠️ 파일에 종목이 부족하여 재선정합니다.")
 
-    # 2. 파일 없거나 부족 → 350개 선정
     print("📁 350개 새로 선정 중...")
     tickers = select_top_350()
     save_universe(tickers)
@@ -152,26 +175,7 @@ def save_universe(tickers):
     print(f"💾 {len(tickers)}개 저장 완료")
 
 # =========================
-# 🔧 yfinance 버전 호환 헬퍼
-# =========================
-def _get_df(data, ticker, batch):
-    """yfinance 버전 무관하게 df 추출"""
-    try:
-        if len(batch) == 1:
-            return data.dropna()
-        if isinstance(data.columns, pd.MultiIndex):
-            if ticker not in data.columns.get_level_values(1):
-                return None
-            return data.xs(ticker, axis=1, level=1).dropna()
-        else:
-            if ticker not in data:
-                return None
-            return data[ticker].dropna()
-    except:
-        return None
-
-# =========================
-# 📈 Supertrend (numpy 최적화 + TR 버그 수정)
+# 📈 지표 계산 (Supertrend / Pullback / Breakout)
 # =========================
 def supertrend(df, period=10, mult=3):
     high = df["High"].values.astype(float)
@@ -264,15 +268,14 @@ def scan(tickers):
 
         try:
             data = yf.download(batch, period="3mo", interval="1d",
-                             group_by="ticker", auto_adjust=True,
-                             threads=True, progress=False)
+                               group_by="ticker", progress=False)
         except Exception as e:
             print(f"⚠️ 배치 다운로드 실패: {e}")
             continue
 
         for ticker in batch:
             try:
-                df = _get_df(data, ticker, batch)
+                df = _get_df(data, ticker)
                 if df is None or len(df) < 60:
                     continue
 
@@ -330,7 +333,7 @@ def scan(tickers):
 # =========================
 if __name__ == "__main__":
     print("=" * 50)
-    print("🚀 Supertrend 스캐너 v3.1")
+    print("🚀 Supertrend 스캐너 v3.2 (버그 픽스)")
     print("=" * 50)
 
     try:
@@ -342,12 +345,10 @@ if __name__ == "__main__":
             print("📈 장중 스캔 실행")
             scan(tickers)
         else:
-            print("🌙 장마감 - 종목 업데이트")
-            new_tickers = select_top_350()
-            save_universe(new_tickers)
-            send_telegram(f"🌙 내일 스캔 대상 {len(new_tickers)}개 선정 완료")
+            print("🌙 장마감 - 종목 업데이트 (또는 로컬 스캔 테스트)")
+            scan(tickers) # 테스트를 위해 장마감이어도 일단 스캔이 돌아가게 할 경우 유지 (원치 않으면 주석 처리)
 
-        print("✅ 완료 - 종료")
+        print("✅ 프로세스 완료")
     except Exception as e:
         error_msg = f"❌ 에러 발생: {str(e)}"
         print(error_msg)
