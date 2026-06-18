@@ -2,8 +2,15 @@ name: Stock Scanner
 
 on:
   schedule:
-    - cron: '0 19 * * 1-5'
-    - cron: '0 20 * * 1-5'
+    # 미국 장중 1시간 간격 (09:30 ~ 16:30 EST)
+    - cron: '30 13 * * 1-5'   # 09:30 EST
+    - cron: '30 14 * * 1-5'   # 10:30 EST
+    - cron: '30 15 * * 1-5'   # 11:30 EST
+    - cron: '30 16 * * 1-5'   # 12:30 EST
+    - cron: '30 17 * * 1-5'   # 13:30 EST
+    - cron: '30 18 * * 1-5'   # 14:30 EST
+    - cron: '30 19 * * 1-5'   # 15:30 EST
+    - cron: '30 20 * * 1-5'   # 16:30 EST (장마감 업데이트)
   workflow_dispatch:
 
 jobs:
