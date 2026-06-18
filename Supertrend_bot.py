@@ -10,8 +10,8 @@ import pytz
 # =========================
 # 🔐 텔레그램 설정 (GitHub Secrets에서 가져옴)
 # =========================
-TELEGRAM_TOKEN = os.getenv("8680217169")
-TELEGRAM_CHAT_ID = os.getenv("61473298612")
+TELEGRAM_TOKEN = ("8680217169:AAEsFlCloKbbVR40HxkoXtdZ6hLho9o1aGs")
+TELEGRAM_CHAT_ID = ("61473298612")
 
 def send_telegram(message):
     """텔레그램 메시지 전송"""
