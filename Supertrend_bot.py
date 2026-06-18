@@ -23,7 +23,8 @@ def send_telegram(message):
         requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "Markdown"
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
         }, timeout=5)
         print("📨 전송 완료")
     except Exception as e:
@@ -61,9 +62,15 @@ def save_sent_signals(signals):
 # =========================
 UNIVERSE_FILE = 'universe.txt'
 
+# 🔥 확장된 기본 리스트 (비상용)
 DEFAULT_TICKERS = [
     'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA',
-    'AMD', 'MU', 'AVGO', 'QQQ', 'SPY', 'IWM', 'SOXX'
+    'AMD', 'MU', 'AVGO', 'QQQ', 'SPY', 'IWM', 'SOXX',
+    'JPM', 'V', 'WMT', 'PG', 'JNJ', 'UNH', 'HD',
+    'DIS', 'MA', 'BAC', 'CVX', 'XOM', 'PFE', 'ABT',
+    'NKE', 'COST', 'CRM', 'ADBE', 'NFLX', 'INTC', 'CSCO',
+    'PEP', 'KO', 'MRK', 'MCD', 'ACN', 'NOW', 'TXN',
+    'QCOM', 'AMAT', 'LRCX', 'KLAC', 'SNPS', 'CDNS'
 ]
 
 def load_universe_from_wiki():
@@ -87,12 +94,12 @@ def select_top_350():
     for i in range(0, min(len(all_tickers), 500), batch_size):
         batch = all_tickers[i:i+batch_size]
         try:
-            data = yf.download(batch, period="1y", progress=False,
+            data = yf.download(batch, period="2y", progress=False,
                              group_by="ticker", auto_adjust=True)
             for ticker in batch:
                 try:
                     df = _get_df(data, ticker, batch)
-                    if df is None or len(df) < 200:
+                    if df is None or len(df) < 250:
                         continue
                     if df['Volume'].mean() < 500000:
                         continue
@@ -112,17 +119,29 @@ def select_top_350():
 
     candidates.sort(key=lambda x: x[1], reverse=True)
     result = [c[0] for c in candidates[:350]]
-    return result if result else DEFAULT_TICKERS
+    
+    # 🔥 350개 선정 실패 시 오류 발생 (DEFAULT_TICKERS 방지)
+    if len(result) < 50:
+        raise ValueError(f"❌ 350개 선정 실패 (선정됨: {len(result)}개). 네트워크/위키피디아를 확인하세요.")
+    
+    return result
 
 def get_universe():
-    """universe.txt가 없으면 350개 새로 선정"""
+    """
+    universe.txt가 없거나 50개 미만이면 350개 새로 선정
+    """
+    # 1. 파일 확인
     if os.path.exists(UNIVERSE_FILE):
         with open(UNIVERSE_FILE, 'r') as f:
             tickers = f.read().splitlines()
-            if tickers:
+            if len(tickers) >= 50:
                 print(f"📂 파일에서 로드: {len(tickers)}개")
                 return tickers
-    print("📁 파일 없음 → 350개 새로 선정")
+            else:
+                print(f"⚠️ 파일에 종목이 {len(tickers)}개뿐 → 재선정")
+
+    # 2. 파일 없거나 부족 → 350개 선정
+    print("📁 350개 새로 선정 중...")
     tickers = select_top_350()
     save_universe(tickers)
     return tickers
@@ -261,6 +280,7 @@ def scan(tickers):
                 price = float(df['Close'].iloc[-1])
                 now_time = get_us_time()
 
+                # 1️⃣ Supertrend 전환
                 st_key = (ticker, "ST", today)
                 if st_key not in sent_signals:
                     if not df["trend"].iloc[-2] and df["trend"].iloc[-1]:
@@ -270,6 +290,7 @@ def scan(tickers):
                         signals_found.append(ticker)
                         print(f"  🔄 {ticker} ST전환 ${price:.2f}")
 
+                # 2️⃣ 눌림목
                 pull_key = (ticker, "PULL", today)
                 if pull_key not in sent_signals:
                     if check_pullback(df):
@@ -279,6 +300,7 @@ def scan(tickers):
                         signals_found.append(ticker)
                         print(f"  📉 {ticker} 눌림목 ${price:.2f}")
 
+                # 3️⃣ 돌파
                 break_key = (ticker, "BREAK", today)
                 if break_key not in sent_signals:
                     if check_breakout(df):
@@ -308,20 +330,25 @@ def scan(tickers):
 # =========================
 if __name__ == "__main__":
     print("=" * 50)
-    print("🚀 Supertrend 스캐너 v3.0")
+    print("🚀 Supertrend 스캐너 v3.1")
     print("=" * 50)
 
-    tickers = get_universe()
-    now = get_us_time()
-    print(f"⏰ 현재 미국 동부 시간: {now.strftime('%Y-%m-%d %H:%M')} EST")
+    try:
+        tickers = get_universe()
+        now = get_us_time()
+        print(f"⏰ 현재 미국 동부 시간: {now.strftime('%Y-%m-%d %H:%M')} EST")
 
-    if is_market_open():
-        print("📈 장중 스캔 실행")
-        scan(tickers)
-    else:
-        print("🌙 장마감 - 종목 업데이트")
-        new_tickers = select_top_350()
-        save_universe(new_tickers)
-        send_telegram(f"🌙 내일 스캔 대상 {len(new_tickers)}개 선정 완료")
+        if is_market_open():
+            print("📈 장중 스캔 실행")
+            scan(tickers)
+        else:
+            print("🌙 장마감 - 종목 업데이트")
+            new_tickers = select_top_350()
+            save_universe(new_tickers)
+            send_telegram(f"🌙 내일 스캔 대상 {len(new_tickers)}개 선정 완료")
 
-    print("✅ 완료 - 종료")
+        print("✅ 완료 - 종료")
+    except Exception as e:
+        error_msg = f"❌ 에러 발생: {str(e)}"
+        print(error_msg)
+        send_telegram(error_msg)
