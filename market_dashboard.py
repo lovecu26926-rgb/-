@@ -93,7 +93,7 @@ def calculate_supertrend(df, period=10, mult=3):
 # =========================
 def get_trend_signal(df):
     if len(df) < 250:
-        return "데이터 부족", "❌", "", ""
+        return "데이터 부족", "❌", ""
 
     ma20 = df['Close'].rolling(20).mean().iloc[-1]
     ma50 = df['Close'].rolling(50).mean().iloc[-1]
@@ -106,21 +106,18 @@ def get_trend_signal(df):
     elif ma20 < ma50 < ma200:
         ma_status, ma_emoji = "역배열", "❌"
     else:
-        ma_status, ma_emoji = "혼재", "⚪"
+        ma_status, ma_emoji = "혼재", "⚪️"
 
     trend = calculate_supertrend(df)
 
     signal = ""
-    signal_emoji = ""
     if len(trend) >= 3:
         if not trend[-2] and trend[-1]:
             signal = "🟢 SuperTrend 상승전환"
-            signal_emoji = "🟢"
         elif trend[-2] and not trend[-1]:
             signal = "🔴 SuperTrend 하락전환"
-            signal_emoji = "🔴"
 
-    return ma_status, ma_emoji, signal, signal_emoji
+    return ma_status, ma_emoji, signal
 
 # =========================
 # 🔧 yfinance 데이터 정제 헬퍼
@@ -210,7 +207,7 @@ def get_global_dashboard():
             prev = df['Close'].iloc[-2]
             change = ((current / prev) - 1) * 100
 
-            ma_status, ma_emoji, signal, signal_emoji = get_trend_signal(df)
+            ma_status, ma_emoji, signal = get_trend_signal(df)
 
             results[ticker] = {
                 'name': name,
@@ -219,7 +216,6 @@ def get_global_dashboard():
                 'ma_status': ma_status,
                 'ma_emoji': ma_emoji,
                 'signal': signal,
-                'signal_emoji': signal_emoji
             }
         except Exception as e:
             results[ticker] = {'name': name, 'error': str(e)[:30]}
@@ -255,7 +251,7 @@ def format_dashboard(results):
                 else:
                     msg += f"{emoji} {r['name']}: {r['change']:+.2f}% [{r['ma_emoji']} {r['ma_status']}]"
                 if r['signal']:
-                    msg += f" [{r['signal_emoji']} {r['signal']}]"
+                    msg += f" {r['signal']}"
                 msg += "\n"
         msg += "\n"
 
@@ -304,7 +300,7 @@ def format_dashboard(results):
 # =========================
 if __name__ == "__main__":
     print("=" * 50)
-    print("🌏 글로벌 매크로 대시보드 v3.2 (딥시크 최종)")
+    print("🌏 글로벌 매크로 대시보드 v3.2 (최종)")
     print("=" * 50)
 
     results = get_global_dashboard()
