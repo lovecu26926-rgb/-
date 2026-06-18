@@ -3,10 +3,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
-import json
 import time
-import re
-from datetime import datetime, date
+from datetime import datetime
 import pytz
 
 # =========================
@@ -14,11 +12,6 @@ import pytz
 # =========================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
-def escape_markdown(text):
-    """텔레그램 MarkdownV2 특수문자 이스케이프"""
-    special_chars = r'([_*\[\]()~`>#+\-=|{}.!])'
-    return re.sub(special_chars, r'\\\1', text)
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -29,51 +22,20 @@ def send_telegram(message):
         response = requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "MarkdownV2",
+            "parse_mode": "HTML",
             "disable_web_page_preview": True
-        }, timeout=5)
+        }, timeout=10)
         if response.status_code == 200:
             print("📨 전송 완료")
         else:
-            print(f"⚠️ Markdown 실패, 일반 텍스트 재전송")
+            print(f"⚠️ HTML 실패, 일반 텍스트 재전송")
             requests.post(url, data={
                 "chat_id": TELEGRAM_CHAT_ID,
                 "text": message,
                 "disable_web_page_preview": True
-            }, timeout=5)
+            }, timeout=10)
     except Exception as e:
         print(f"❌ 전송 실패: {e}")
-
-# =========================
-# 🔧 yfinance 버전 호환 헬퍼
-# =========================
-def _get_close_series(data, ticker):
-    """yfinance 버전 무관하게 Close 시리즈 추출"""
-    try:
-        if isinstance(data, pd.Series):
-            return data
-        if isinstance(data, pd.DataFrame):
-            if 'Close' in data.columns:
-                return data['Close']
-            if isinstance(data.columns, pd.MultiIndex):
-                if ticker in data.columns.get_level_values(1):
-                    return data.xs(ticker, axis=1, level=1)['Close']
-        return None
-    except:
-        return None
-
-def _get_full_df(data, ticker):
-    """yfinance 버전 무관하게 전체 DataFrame 추출"""
-    try:
-        if isinstance(data, pd.DataFrame):
-            if 'Open' in data.columns:
-                return data
-            if isinstance(data.columns, pd.MultiIndex):
-                if ticker in data.columns.get_level_values(1):
-                    return data.xs(ticker, axis=1, level=1)
-        return None
-    except:
-        return None
 
 # =========================
 # 📈 Supertrend (numpy 최적화)
@@ -133,7 +95,6 @@ def get_trend_signal(df):
     if len(df) < 250:
         return "데이터 부족", "❌", "", ""
 
-    # 이평선 (200일선 안정적으로 계산)
     ma20 = df['Close'].rolling(20).mean().iloc[-1]
     ma50 = df['Close'].rolling(50).mean().iloc[-1]
     ma200 = df['Close'].rolling(200).mean().iloc[-1]
@@ -147,7 +108,6 @@ def get_trend_signal(df):
     else:
         ma_status, ma_emoji = "혼재", "⚪"
 
-    # SuperTrend
     trend = calculate_supertrend(df)
 
     signal = ""
@@ -163,11 +123,37 @@ def get_trend_signal(df):
     return ma_status, ma_emoji, signal, signal_emoji
 
 # =========================
+# 🔧 yfinance 데이터 정제 헬퍼
+# =========================
+def clean_yf_data(df):
+    """yfinance 데이터프레임 정제 (멀티인덱스 + Volume 부재 대응)"""
+    if df.empty:
+        return None
+
+    # 멀티인덱스 처리
+    if isinstance(df.columns, pd.MultiIndex):
+        if len(df.columns.levels) > 1:
+            ticker = df.columns.levels[1][0]
+            df = df.xs(ticker, axis=1, level=1)
+        else:
+            df = df.droplevel(1, axis=1)
+
+    # 필수 컬럼만 선택 (Volume은 없을 수 있음)
+    required_cols = ['Open', 'High', 'Low', 'Close']
+    existing_cols = [c for c in required_cols if c in df.columns]
+    if 'Volume' in df.columns:
+        existing_cols.append('Volume')
+
+    df = df[existing_cols].copy()
+    df = df.astype(float)
+    return df
+
+# =========================
 # 🌏 글로벌 대시보드
 # =========================
 def get_global_dashboard():
     tickers = {
-        # 미국
+        # 미국 지수
         'SPY': 'S&P 500',
         'QQQ': '나스닥 100',
         'DIA': '다우존스',
@@ -196,7 +182,7 @@ def get_global_dashboard():
         'GLD': '금 (Gold)',
         'SLV': '은 (Silver)',
         'COPX': '구리 (Copper)',
-        # 채권
+        # 채권 금리
         '^IRX': '미국 3개월물',
         '^FVX': '미국 5년물',
         '^TNX': '미국 10년물',
@@ -213,14 +199,8 @@ def get_global_dashboard():
 
     for ticker, name in tickers.items():
         try:
-            # 2년치 데이터로 변경 (200일선 안정적 계산)
             df = yf.download(ticker, period="2y", progress=False, auto_adjust=True)
-
-            # 싱글 티커 처리 (MultiIndex 대응)
-            if isinstance(df.columns, pd.MultiIndex):
-                df = df.xs(ticker, axis=1, level=1) if ticker in df.columns.get_level_values(1) else None
-            else:
-                df = df if not df.empty else None
+            df = clean_yf_data(df)
 
             if df is None or len(df) < 250:
                 results[ticker] = {'name': name, 'error': '데이터 부족'}
@@ -243,89 +223,63 @@ def get_global_dashboard():
             }
         except Exception as e:
             results[ticker] = {'name': name, 'error': str(e)[:30]}
-        time.sleep(0.3)
+        time.sleep(0.15)
 
     return results
 
 # =========================
-# 📱 대시보드 포맷
+# 📱 대시보드 포맷 (HTML)
 # =========================
 def format_dashboard(results):
     now = datetime.now(pytz.timezone('US/Eastern'))
 
-    msg = "🌏 *글로벌 매크로 대시보드*\n"
-    msg += f"⏰ {escape_markdown(now.strftime('%Y-%m-%d %H:%M'))} EST\n"
-    msg += "=" * 30 + "\n\n"
+    msg = "🌏 <b>글로벌 매크로 대시보드</b>\n"
+    msg += f"⏰ {now.strftime('%Y-%m-%d %H:%M')} EST\n"
+    msg += "==============================\n\n"
 
-    # 미국 지수
-    msg += "📈 *미국 주요 지수*\n"
-    for t in ['SPY', 'QQQ', 'DIA', 'IWM']:
-        r = results.get(t)
-        if r and 'error' not in r:
-            emoji = "🟢" if r['change'] > 0 else "🔴"
-            msg += f"{emoji} {r['name']}: ${r['price']:.2f} "
-            msg += f"({'+' if r['change']>0 else ''}{r['change']:.2f}%) "
-            msg += f"[{r['ma_emoji']} {r['ma_status']}]"
-            if r['signal']:
-                msg += f" [{r['signal_emoji']} {r['signal']}]"
-            msg += "\n"
-    msg += "\n"
+    sections = [
+        ("📈 <b>미국 주요 지수</b>", ['SPY', 'QQQ', 'DIA', 'IWM'], True),
+        ("🌏 <b>유럽 주요 지수</b>", ['VGK', 'EWU', 'EWQ', 'EWG'], True),
+        ("🌏 <b>아시아 주요 지수</b>", ['EWJ', 'EWY', 'EWT'], True),
+        ("🏭 <b>미국 섹터 흐름</b>", ['XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLB', 'XLU', 'XLY', 'XLP', 'XLRE'], False),
+    ]
 
-    # 유럽 지수
-    msg += "🌏 *유럽 주요 지수*\n"
-    for t in ['VGK', 'EWU', 'EWQ', 'EWG']:
-        r = results.get(t)
-        if r and 'error' not in r:
-            emoji = "🟢" if r['change'] > 0 else "🔴"
-            msg += f"{emoji} {r['name']}: ${r['price']:.2f} "
-            msg += f"({'+' if r['change']>0 else ''}{r['change']:.2f}%) "
-            msg += f"[{r['ma_emoji']} {r['ma_status']}]"
-            if r['signal']:
-                msg += f" [{r['signal_emoji']} {r['signal']}]"
-            msg += "\n"
-    msg += "\n"
-
-    # 아시아 지수
-    msg += "🌏 *아시아 주요 지수*\n"
-    for t in ['EWJ', 'EWY', 'EWT']:
-        r = results.get(t)
-        if r and 'error' not in r:
-            emoji = "🟢" if r['change'] > 0 else "🔴"
-            msg += f"{emoji} {r['name']}: ${r['price']:.2f} "
-            msg += f"({'+' if r['change']>0 else ''}{r['change']:.2f}%) "
-            msg += f"[{r['ma_emoji']} {r['ma_status']}]"
-            if r['signal']:
-                msg += f" [{r['signal_emoji']} {r['signal']}]"
-            msg += "\n"
-    msg += "\n"
-
-    # 섹터
-    msg += "🏭 *미국 섹터 흐름*\n"
-    sector_list = ['XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLB', 'XLU', 'XLY', 'XLP', 'XLRE']
-    for t in sector_list:
-        r = results.get(t)
-        if r and 'error' not in r:
-            emoji = "🟢" if r['change'] > 0 else "🔴"
-            msg += f"{emoji} {r['name']}: {r['change']:+.2f}% "
-            msg += f"[{r['ma_emoji']} {r['ma_status']}]"
-            if r['signal']:
-                msg += f" [{r['signal_emoji']} {r['signal']}]"
-            msg += "\n"
-    msg += "\n"
+    for title, ticker_list, show_price in sections:
+        msg += f"{title}\n"
+        for t in ticker_list:
+            r = results.get(t)
+            if r and 'error' not in r:
+                emoji = "🟢" if r['change'] > 0 else "🔴"
+                if show_price:
+                    msg += f"{emoji} {r['name']}: ${r['price']:.2f} ({r['change']:+.2f}%) [{r['ma_emoji']} {r['ma_status']}]"
+                else:
+                    msg += f"{emoji} {r['name']}: {r['change']:+.2f}% [{r['ma_emoji']} {r['ma_status']}]"
+                if r['signal']:
+                    msg += f" [{r['signal_emoji']} {r['signal']}]"
+                msg += "\n"
+        msg += "\n"
 
     # 거시 지표
-    msg += "🌍 *거시 지표*\n"
+    msg += "🌍 <b>거시 지표</b>\n"
     if '^VIX' in results and 'error' not in results['^VIX']:
         vix = results['^VIX']['price']
-        status = "😎 낙관" if vix < 15 else "😊 안정" if vix < 20 else "😐 불안" if vix < 25 else "😨 공포"
+        if vix < 15:
+            status = "😎 낙관"
+        elif vix < 20:
+            status = "😊 안정"
+        elif vix < 25:
+            status = "😐 불안"
+        else:
+            status = "😨 공포"
         msg += f"📊 VIX: {vix:.2f} ({status})\n"
+
     if 'BTC-USD' in results and 'error' not in results['BTC-USD']:
         r = results['BTC-USD']
         msg += f"₿ 비트코인: ${r['price']:,.0f} ({r['change']:+.2f}%)\n"
 
-    # SuperTrend 신호 요약
-    msg += "\n" + "=" * 30 + "\n"
-    msg += "🚨 *SuperTrend 추세전환 신호*\n"
+    # SuperTrend 요약
+    msg += "\n==============================\n"
+    msg += "🚨 <b>SuperTrend 추세전환 신호</b>\n"
 
     buy_signals = []
     sell_signals = []
@@ -337,9 +291,11 @@ def format_dashboard(results):
                 sell_signals.append(f"🔴 {r['name']}")
 
     if buy_signals:
-        msg += "📈 매수 신호:\n" + "\n".join(buy_signals[:5]) + "\n"
+        msg += "📈 <b>매수 신호:</b>\n" + "\n".join(buy_signals[:5]) + "\n\n"
     if sell_signals:
-        msg += "📉 매도 신호:\n" + "\n".join(sell_signals[:5]) + "\n"
+        msg += "📉 <b>매도 신호:</b>\n" + "\n".join(sell_signals[:5]) + "\n"
+    if not buy_signals and not sell_signals:
+        msg += "조회된 추세전환 신호가 없습니다.\n"
 
     return msg
 
@@ -348,35 +304,32 @@ def format_dashboard(results):
 # =========================
 if __name__ == "__main__":
     print("=" * 50)
-    print("🌏 글로벌 매크로 대시보드 v3.0")
+    print("🌏 글로벌 매크로 대시보드 v3.2 (딥시크 최종)")
     print("=" * 50)
 
     results = get_global_dashboard()
     msg = format_dashboard(results)
 
-    # 4096자 제한 처리 (텔레그램 메시지 길이 제한)
     if len(msg) > 4000:
-        # 요약만 보내기
-        summary = "📊 *대시보드 요약*\n"
-        summary += "=" * 20 + "\n\n"
+        summary = "📊 <b>대시보드 요약 (글자수 초과)</b>\n"
+        summary += "==============================\n\n"
 
-        # SuperTrend 신호만 추출
-        buy_signals = []
-        sell_signals = []
+        buy = []
+        sell = []
         for t, r in results.items():
             if r and 'error' not in r and r.get('signal'):
                 if '상승전환' in r['signal']:
-                    buy_signals.append(f"🟢 {r['name']}")
+                    buy.append(f"🟢 {r['name']}")
                 elif '하락전환' in r['signal']:
-                    sell_signals.append(f"🔴 {r['name']}")
+                    sell.append(f"🔴 {r['name']}")
 
-        if buy_signals:
-            summary += "📈 매수 신호:\n" + "\n".join(buy_signals[:3]) + "\n\n"
-        if sell_signals:
-            summary += "📉 매도 신호:\n" + "\n".join(sell_signals[:3]) + "\n"
+        if buy:
+            summary += "📈 <b>매수 신호:</b>\n" + "\n".join(buy[:3]) + "\n\n"
+        if sell:
+            summary += "📉 <b>매도 신호:</b>\n" + "\n".join(sell[:3]) + "\n"
 
         send_telegram(summary)
     else:
         send_telegram(msg)
 
-    print("✅ 전송 완료")
+    print("✅ 프로세스 완료")
