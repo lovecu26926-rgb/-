@@ -8,72 +8,53 @@ FMP_API_KEY = "Us5oERwTgTB1pQFmxv5RW0e7uMVG8mjd"
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
 
-# =========================
-# 티커 수집
-# =========================
+def get_tickers():
+    all_tickers = set()
 
-all_tickers = set()
-
-for url in [TREND_CSV, SUPERTREND_CSV]:
-    try:
+    for url in [TREND_CSV, SUPERTREND_CSV]:
         df = pd.read_csv(url)
+        for t in df.iloc[:, 0]:
+            t = str(t).strip().upper()
+            if t:
+                all_tickers.add(t)
 
-        for ticker in df.iloc[:,0]:
-            ticker = str(ticker).strip().upper()
+    return sorted(list(all_tickers))
 
-            if ticker:
-                all_tickers.add(ticker)
+def fetch_fmp(ticker):
+    url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={FMP_API_KEY}"
+    r = requests.get(url, timeout=15)
+    data = r.json()
 
-    except Exception as e:
-        print(e)
+    if not data:
+        return None
 
-print(f"총 {len(all_tickers)}개 종목")
+    d = data[0]
 
-# =========================
-# FMP 조회
-# =========================
+    return {
+        "eps": d.get("netIncomePerShareTTM", 0),
+        "rev": d.get("revenuePerShareTTM", 0)
+    }
 
 fundamentals = {}
 
-for ticker in sorted(all_tickers):
+tickers = get_tickers()
 
+print(f"총 {len(tickers)}개")
+
+for t in tickers:
     try:
+        data = fetch_fmp(t)
 
-        url = (
-            f"https://financialmodelingprep.com/api/v3/"
-            f"ratios-ttm/{ticker}?apikey={FMP_API_KEY}"
-        )
+        if data:
+            fundamentals[t] = data
+            print("OK", t)
 
-        r = requests.get(url, timeout=20)
-
-        data = r.json()
-
-        if not data:
-            continue
-
-        fundamentals[ticker] = {
-            "eps_growth": 0,
-            "rev_growth": 0
-        }
-
-        print("OK", ticker)
-
-        time.sleep(0.3)
+        time.sleep(0.2)
 
     except Exception as e:
-
-        print("ERR", ticker, e)
-
-# =========================
-# 저장
-# =========================
+        print("ERR", t, e)
 
 with open("fundamentals.json", "w") as f:
-
-    json.dump(
-        fundamentals,
-        f,
-        indent=2
-    )
+    json.dump(fundamentals, f, indent=2)
 
 print("완료")
