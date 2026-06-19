@@ -6,7 +6,7 @@ import os
 
 # 🔑 API 키는 환경 변수로 관리하세요 (보안)
 # 직접 입력 시에는 여기에 본인 키를 넣으세요
-FMP_API_KEY = os.environ.get("FMP_API_KEY", "YOUR_API_KEY_HERE")
+FMP_API_KEY = os.environ.get(Us5oERwTgTB1pQFmxv5RW0e7uMVG8mjd)
 
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
