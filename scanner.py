@@ -1,26 +1,24 @@
 import os
-import yfinance as yf
+import time
+import json
+import requests
 import pandas as pd
 import numpy as np
-import requests
-import json
-import time
+import yfinance as yf
 from datetime import date
-import warnings
-warnings.filterwarnings("ignore")
 
 # =========================
 # CONFIG
 # =========================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-FMP_API_KEY = os.environ.get("FMP_API_KEY")
+FMP_KEY = os.environ.get(Us5oERwTgTB1pQFmxv5RW0e7uMVG8mjd)
 
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
 
 FMP_CACHE = "fmp_cache.json"
-
+SENT_FILE = "sent_signals.json"
 
 # =========================
 # TELEGRAM
@@ -29,131 +27,105 @@ def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print(msg)
         return
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": msg
+    })
+
+# =========================
+# SENT CACHE
+# =========================
+def load_sent():
+    if os.path.exists(SENT_FILE):
+        return set(tuple(x) for x in json.load(open(SENT_FILE)))
+    return set()
+
+def save_sent(data):
+    json.dump([list(x) for x in data], open(SENT_FILE, "w"))
+
+# =========================
+# FMP FUNDAMENTALS (CACHE 1 DAY)
+# =========================
+def get_fmp_data(ticker):
+    today = str(date.today())
+
+    if os.path.exists(FMP_CACHE):
+        cache = json.load(open(FMP_CACHE))
+    else:
+        cache = {}
+
+    if ticker in cache and cache[ticker]["date"] == today:
+        return cache[ticker]["data"]
+
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={FMP_KEY}"
+        r = requests.get(url).json()[0]
+
+        data = {
+            "eps_growth": float(r.get("netIncomePerShareTTM", 0) or 0),
+            "rev_growth": float(r.get("revenueGrowthTTM", 0) or 0),
+            "roe": float(r.get("roeTTM", 0) or 0)
+        }
+
+        cache[ticker] = {"date": today, "data": data}
+        json.dump(cache, open(FMP_CACHE, "w"))
+
+        return data
+    except:
+        return {"eps_growth": 0, "rev_growth": 0, "roe": 0}
+
+# =========================
+# SCORE SYSTEM
+# =========================
+def growth_score(f):
+    eps = f["eps_growth"]
+    rev = f["rev_growth"]
+    roe = f["roe"]
+
+    return (
+        min(max(eps, 0), 100) * 0.5 +
+        min(max(rev, 0), 100) * 0.3 +
+        min(max(roe, 0), 100) * 0.2
     )
 
-
-# =========================
-# FMP (1회/일)
-# =========================
-def load_cache():
-    if os.path.exists(FMP_CACHE):
-        return json.load(open(FMP_CACHE, "r"))
-    return {}
-
-def save_cache(data):
-    json.dump(data, open(FMP_CACHE, "w"))
-
-def update_fmp(tickers):
-    data = {}
-
-    for t in tickers:
-        try:
-            url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{t}?apikey={FMP_API_KEY}"
-            r = requests.get(url).json()
-
-            if isinstance(r, list) and len(r) > 0:
-                d = r[0]
-                data[t] = {
-                    "eps": float(d.get("netIncomePerShareTTM", 0) or 0),
-                    "rev": float(d.get("revenueGrowth", 0) or 0),
-                    "margin": float(d.get("netProfitMarginTTM", 0) or 0)
-                }
-        except:
-            continue
-
-    save_cache(data)
-    return data
-
-
-# =========================
-# SCORE
-# =========================
-def growth_score(eps, rev, margin):
-    return (eps * 0.5) + (rev * 0.3) + (margin * 0.2)
-
-def tech_score(mode):
-    if mode == "BREAKOUT":
-        return 70
-    if mode == "PULLBACK":
+def tech_score(signal_type):
+    if "BREAKOUT" in signal_type:
         return 50
-    if mode == "SUPERTREND":
-        return 60
+    if "PULLBACK" in signal_type:
+        return 35
     return 40
 
-
 # =========================
-# SUPER TREND
+# TECH SIGNALS
 # =========================
-def supertrend(df):
-    high, low, close = df["High"], df["Low"], df["Close"]
-    atr = (high - low).rolling(10).mean()
+def check_signal(df):
+    if len(df) < 50:
+        return None
 
-    upper = (high + low)/2 + 3 * atr
-    lower = (high + low)/2 - 3 * atr
-
-    trend = [True]
-
-    for i in range(1, len(df)):
-        if close[i] > upper[i-1]:
-            trend.append(True)
-        elif close[i] < lower[i-1]:
-            trend.append(False)
-        else:
-            trend.append(trend[-1])
-
-    df["trend"] = trend
-    return df
-
-
-# =========================
-# SIGNALS (3개 분리)
-# =========================
-def signals(df):
     close = df["Close"]
     ma20 = close.rolling(20).mean()
     ma50 = close.rolling(50).mean()
 
-    breakout = close.iloc[-1] > close.rolling(20).max().iloc[-2]
+    breakout = close.iloc[-1] > df["High"].rolling(20).max().iloc[-2]
     pullback = abs(close.iloc[-1] - ma20.iloc[-1]) / ma20.iloc[-1] < 0.03
 
-    sigs = []
-
     if breakout:
-        sigs.append("BREAKOUT")
+        return "BREAKOUT"
     if ma20.iloc[-1] > ma50.iloc[-1] and pullback:
-        sigs.append("PULLBACK")
-
-    df = supertrend(df)
-    if df["trend"].iloc[-1] and not df["trend"].iloc[-2]:
-        sigs.append("SUPERTREND")
-
-    return sigs
-
+        return "PULLBACK"
+    return None
 
 # =========================
-# LOAD
+# SCAN ENGINE
 # =========================
-def load_tickers():
-    df = pd.read_csv(TREND_CSV)
-    return list(df["Symbol"].dropna().unique())
-
-
-# =========================
-# MAIN
-# =========================
-def run():
-    print("RUNNING SCANNER")
-
-    tickers = load_tickers()
-    fmp = load_cache()
-
-    if not fmp:
-        fmp = update_fmp(tickers)
-
+def scan(csv_url, name):
+    tickers = pd.read_csv(csv_url)["Symbol"].dropna().tolist()
     results = []
+
+    sent = load_sent()
+
+    print(f"\n[{name}] SCAN START")
 
     for t in tickers:
         try:
@@ -161,43 +133,57 @@ def run():
             if df.empty:
                 continue
 
-            sigs = signals(df)
-            if not sigs:
+            sig = check_signal(df)
+            if not sig:
+                continue
+
+            key = (t, name, str(date.today()))
+            if key in sent:
                 continue
 
             price = df["Close"].iloc[-1]
-            f = fmp.get(t, {"eps":0,"rev":0,"margin":0})
+            fmp = get_fmp_data(t)
 
-            g = growth_score(f["eps"], f["rev"], f["margin"])
+            g_score = growth_score(fmp)
+            t_score = tech_score(sig)
 
-            tech = max([tech_score(s) for s in sigs])
-            total = g * 0.6 + tech * 0.4
+            total = round(g_score * 0.6 + t_score * 0.4, 2)
 
             results.append({
-                "t": t,
-                "p": price,
-                "g": g,
-                "tech": tech,
-                "total": total,
-                "sig": ",".join(sigs)
+                "ticker": t,
+                "price": price,
+                "signal": sig,
+                "growth": g_score,
+                "tech": t_score,
+                "total": total
             })
+
+            sent.add(key)
+            print(t, sig)
+
+            time.sleep(0.2)
 
         except:
             continue
 
-    results = sorted(results, key=lambda x: x["total"], reverse=True)
+    save_sent(sent)
 
-    msg = "🏆 TOP 20\n\n"
+    results.sort(key=lambda x: x["total"], reverse=True)
 
+    msg = f"\n🏆 {name} TOP\n\n"
     for i, r in enumerate(results[:20]):
-        msg += f"{i+1}. {r['t']} {r['total']:.1f} (G{r['g']:.1f}/T{r['tech']:.1f}) {r['sig']}\n"
+        msg += f"{i+1}. {r['ticker']} {r['total']} (G:{r['growth']:.1f} T:{r['tech']})\n"
 
     send_telegram(msg)
     print("DONE")
 
-
 # =========================
-# RUN
+# MAIN
 # =========================
 if __name__ == "__main__":
-    run()
+    print("RUNNING SCANNER")
+
+    scan(TREND_CSV, "TREND")
+    scan(SUPERTREND_CSV, "SUPERTREND")
+
+    print("DONE")
