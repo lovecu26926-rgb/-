@@ -12,12 +12,14 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ==========================================
-# 🔐 환경변수 (설정값)
+# 🔐 환경변수 (텔레그램만 시크릿 사용)
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ST_CSV_URL = os.environ.get("ST_CSV_URL")
-TREND_CSV_URL = os.environ.get("TREND_CSV_URL")
+
+# 🔥 CSV URL은 여기에 직접 입력 (시크릿 우회, 보안에 큰 문제 없음)
+ST_CSV_URL = "https://raw.githubusercontent.com/lovecu26/lovecu26926-rgb/main/trend_universe.csv"
+TREND_CSV_URL = "https://raw.githubusercontent.com/lovecu26/lovecu26926-rgb/main/trend_universe.csv"
 
 # ==========================================
 # 📂 텔레그램 전송 및 중복 방지
@@ -73,13 +75,9 @@ def calculate_action_indicators(df):
     close_vals = df['Close']
     high_vals = df['High']
     
-    # 1. 눌림목 포착용: 21일 지수이동평균 (EMA 21)
     df['EMA21'] = close_vals.ewm(span=21, adjust=False).mean()
-    
-    # 2. 돌파 포착용: 20일간의 최고가 (최근 고점)
     df['High_20'] = high_vals.rolling(20).max()
     
-    # 3. 추세전환 포착용: 슈퍼트렌드 (10, 3)
     period = 10; mult = 3
     high, low, c_val = df["High"].values, df["Low"].values, close_vals.values
     tr = np.maximum(high - low, np.maximum(np.abs(high - np.roll(c_val, 1)), np.abs(low - np.roll(c_val, 1))))
@@ -100,7 +98,6 @@ def calculate_action_indicators(df):
         else: trend[i] = trend[i-1]
         
     df['Supertrend'] = trend
-    
     return df
 
 # ==========================================
@@ -178,19 +175,18 @@ if __name__ == "__main__":
     print("🚀 실전 타점 브리핑 봇 (KST 14:00 전용)")
     print("=" * 60)
 
-    # 1. 시간 체크 (평일 오후 2시)
+    # 1. 시간 체크 (평일 오후 2시) - 테스트를 위해 주석 해제 필요시 사용
     kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
     is_kst_2pm = (kst_now.hour == 14 and 0 <= kst_now.minute <= 5)
     is_weekday = (kst_now.weekday() < 5)
 
-    # 운영 시 아래 두 줄 주석 해제 / 테스트 시 주석 처리
+    # 🔥 테스트 중에는 아래 2줄을 주석 처리 (항상 실행됨)
     # if not is_weekday: exit(print("🌙 주말 - 스킵"))
     # if not is_kst_2pm: exit(print(f"⏰ 현재 {kst_now.strftime('%H:%M')} - 실행 시간 아님"))
 
     print("✅ 스케줄 확인 완료. 사용자 종목 리스트 타점 분석 시작...")
 
     try:
-        # 2. CSV 로드
         st_tickers = load_tickers_from_csv(ST_CSV_URL)
         trend_tickers = load_tickers_from_csv(TREND_CSV_URL)
         all_unique_tickers = list(set(st_tickers + trend_tickers))
@@ -200,7 +196,6 @@ if __name__ == "__main__":
             
         print(f"🔄 대상 종목 로드 완료: 총 {len(all_unique_tickers)}개")
 
-        # 3. 데이터 다운로드
         print("📦 주가 데이터 다운로드 중 (period='3mo')...")
         data_cache = {}
         chunk_size = 50
@@ -224,16 +219,11 @@ if __name__ == "__main__":
 
         print(f"📦 총 {len(data_cache)}개 종목 데이터 준비 완료!")
 
-        # =========================================================
-        # 🕵️‍♂️ [핵심 추가] 티커(Ticker) 검증 및 오류 텔레그램 알림
-        # =========================================================
+        # 티커 검증 및 오류 텔레그램 알림
         missing_tickers = [t for t in all_unique_tickers if t not in data_cache]
         
         if missing_tickers:
-            # 1) 콘솔 출력
             print(f"❌ 오류 심볼 목록: {missing_tickers}")
-            
-            # 2) 텔레그램으로 즉시 알림 전송!
             error_msg = (
                 f"⚠️ *심볼 오류 감지!*\n"
                 f"다음 {len(missing_tickers)}개 종목은 yfinance에서 데이터를 불러올 수 없습니다:\n"
@@ -241,19 +231,12 @@ if __name__ == "__main__":
             )
             if len(missing_tickers) > 15:
                 error_msg += f"\n... 외 {len(missing_tickers) - 15}개 더 있음 (콘솔 확인)"
-            
             send_telegram(error_msg)
             print("🚨 텔레그램으로 오류 알림을 전송했습니다.")
-            
-            # 3) 분석 대상에서 제외 (에러 방지)
-            valid_tickers = [t for t in all_unique_tickers if t in data_cache]
-            print(f"✅ 검증 완료: {len(valid_tickers)}개 종목만 분석을 진행합니다.")
         else:
             print("✅ 모든 심볼이 정상적으로 데이터를 불러왔습니다.")
 
-        # 4. 타점 스캔 실행 (cache에 없는 종목은 scan 함수 내부에서 자동 스킵됨)
         scan_action_points(st_tickers, trend_tickers, data_cache)
-
         print("✅ 마감 브리핑 프로세스 완료")
         
     except Exception as e:
