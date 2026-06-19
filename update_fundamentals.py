@@ -4,10 +4,12 @@ import pandas as pd
 import time
 import os
 
-FMP_API_KEY = os.environ.get("FMP_API_KEY")
+# 🔑 Finnhub API 키 (환경 변수 우선)
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 
-if not FMP_API_KEY:
-    FMP_API_KEY = "YOUR_API_KEY_HERE"
+# 테스트용 직접 입력 (환경변수가 없을 경우에만 사용)
+if not FINNHUB_API_KEY:
+    FINNHUB_API_KEY = "YOUR_FINNHUB_TOKEN_HERE"  # 테스트 시에만 직접 입력
 
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
@@ -22,54 +24,53 @@ def get_tickers():
                 all_tickers.add(t)
     return sorted(list(all_tickers))
 
-def fetch_fmp(ticker):
+def fetch_finnhub(ticker):
+    """
+    Finnhub API (stock/metric)로 재무 데이터를 가져옵니다.
+    - ROE, 이익률, EPS 성장률, 매출 성장률 획득
+    - 무료 플랜: 분당 60회 제한 → 1초 간격 유지
+    """
     try:
-        # 1️⃣ 프로필 (stable)
-        profile_url = f"https://financialmodelingprep.com/stable/profile?symbol={ticker}&apikey={FMP_API_KEY}"
-        profile_resp = requests.get(profile_url, timeout=10)
-        if profile_resp.status_code != 200:
+        url = f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={FINNHUB_API_KEY}"
+        resp = requests.get(url, timeout=10)
+        
+        if resp.status_code != 200:
             return None
-        profile = profile_resp.json()
-        if not profile:
+            
+        data = resp.json()
+        if not data or 'metric' not in data:
             return None
-        p = profile[0]
+        
+        metric = data['metric']
+        
+        # 1. ROE (자기자본이익률)
+        roe = metric.get('roe', 0) or metric.get('roeTTM', 0) or 0
+        # 2. 이익률 (Net Profit Margin)
+        margin = metric.get('netProfitMargin', 0) or metric.get('profitMargin', 0) or 0
+        # 3. EPS 성장률 (YoY)
+        eps_growth = metric.get('epsGrowth', 0) or metric.get('epsGrowthTTM', 0) or 0
+        # 4. 매출 성장률 (YoY)
+        rev_growth = metric.get('revenueGrowth', 0) or metric.get('revenueGrowthTTM', 0) or 0
 
-        # 2️⃣ 키 메트릭스 TTM (stable)
-        metrics_url = f"https://financialmodelingprep.com/stable/key-metrics-ttm?symbol={ticker}&apikey={FMP_API_KEY}"
-        metrics_resp = requests.get(metrics_url, timeout=10)
-        metrics = metrics_resp.json() if metrics_resp.status_code == 200 else []
-        m = metrics[0] if metrics else {}
-
-        # 3️⃣ 손익계산서 TTM (stable)
-        eps_growth = 0
-        income_url = f"https://financialmodelingprep.com/stable/income-statement-ttm?symbol={ticker}&apikey={FMP_API_KEY}"
-        income_resp = requests.get(income_url, timeout=10)
-        if income_resp.status_code == 200:
-            income_data = income_resp.json()
-            if income_data and len(income_data) >= 2:
-                curr = income_data[0]
-                prev = income_data[1]
-                eps_prev = prev.get('eps', 0)
-                eps_curr = curr.get('eps', 0)
-                if eps_prev > 0:
-                    eps_growth = ((eps_curr - eps_prev) / eps_prev) * 100
-
-        # profitMargin이 None이면 netProfitMargin 사용
-        margin = p.get('profitMargin', p.get('netProfitMargin', 0))
-        if margin is None:
-            margin = 0
+        # Finnhub는 보통 소수점(0.15)으로 오지만, 가끔 퍼센트(15.0)로 올 수도 있음 -> 둘 다 대비
+        def convert(val):
+            if val is None:
+                return 0.0
+            # 1보다 크면 이미 퍼센트(%), 1보다 작으면 소수점 -> * 100
+            return round(val * 100 if val < 1 else val, 2)
 
         return {
-            'eps_growth': round(eps_growth, 2),
-            'rev_growth': round(m.get('revenueGrowthTTM', 0) * 100, 2),
-            'roe': round(p.get('roe', 0) * 100, 2),
-            'margin': round(margin * 100, 2),
+            'eps_growth': convert(eps_growth),
+            'rev_growth': convert(rev_growth),
+            'roe': convert(roe),
+            'margin': convert(margin),
         }
     except Exception as e:
-        print(f"⚠️ {ticker} 오류: {e}")
         return None
 
+# =========================
 # 실행
+# =========================
 tickers = get_tickers()
 print(f"📊 총 {len(tickers)}개 종목")
 
@@ -77,14 +78,15 @@ fundamentals = {}
 
 for i, t in enumerate(tickers, 1):
     print(f"[{i}/{len(tickers)}] {t} 조회 중...")
-    data = fetch_fmp(t)
+    data = fetch_finnhub(t)
     if data:
         fundamentals[t] = data
-        eps_display = "흑자전환" if data['eps_growth'] == 999 else f"{data['eps_growth']:.1f}%"
-        print(f"  ✅ EPS {eps_display} | 매출 {data['rev_growth']:.1f}% | 이익률 {data['margin']:.1f}%")
+        print(f"  ✅ EPS {data['eps_growth']:.1f}% | 매출 {data['rev_growth']:.1f}% | ROE {data['roe']:.1f}% | 이익률 {data['margin']:.1f}%")
     else:
         print(f"  ❌ 데이터 없음")
-    time.sleep(0.3)
+    
+    # Finnhub 분당 60회 제한 준수 (1초 대기)
+    time.sleep(1)
 
 with open("fundamentals.json", "w") as f:
     json.dump(fundamentals, f, indent=2)
