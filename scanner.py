@@ -17,9 +17,9 @@ warnings.filterwarnings('ignore')
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# 🔥 CSV URL은 여기에 직접 입력 (시크릿 우회, 보안에 큰 문제 없음)
-ST_CSV_URL = "https://raw.githubusercontent.com/lovecu26/lovecu26926-rgb/main/trend_universe.csv"
-TREND_CSV_URL = "https://raw.githubusercontent.com/lovecu26/lovecu26926-rgb/main/trend_universe.csv"
+# 🔥 CSV URL 수정 (lovecu26926-rgb / 레포명 -)
+ST_CSV_URL = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
+TREND_CSV_URL = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 
 # ==========================================
 # 📂 텔레그램 전송 및 중복 방지
@@ -120,6 +120,7 @@ def scan_action_points(st_tickers, trend_tickers, cache):
         last = df.iloc[-1]
         prev = df.iloc[-2]
         
+        # 슈퍼트렌드 상승 전환 (다른 신호보다 우선)
         if not prev['Supertrend'] and last['Supertrend']:
             key = (ticker, "ST_REVERSAL", today)
             if key not in sent_signals:
@@ -129,29 +130,22 @@ def scan_action_points(st_tickers, trend_tickers, cache):
                 signals_found.append(ticker)
                 print(f"🎯 [ST 전환] {ticker}")
 
-    # 임무 2 & 3: TREND 리스트 → 눌림목 및 돌파
+    # 임무 2 & 3: TREND 리스트 → 돌파 OR 눌림목 (중복 방지, 우선순위: 돌파 > 눌림목)
     for ticker in trend_tickers:
+        # ST_REVERSAL 이미 송신한 종목은 TREND 신호 스킵
+        if any((ticker, "ST_REVERSAL", today) == sig for sig in sent_signals):
+            continue
+            
         df = cache.get(ticker)
         if df is None: continue
         df = calculate_action_indicators(df)
         if df is None: continue
         
         last = df.iloc[-1]
-        prev = df.iloc[-2]
         price = last['Close']
         
-        # 눌림목 (21일선 3% 이내)
-        if abs(price - last['EMA21']) / last['EMA21'] < 0.03:
-            key = (ticker, "PULLBACK", today)
-            if key not in sent_signals:
-                msg = f"📉 *[눌림목] {ticker}*\n💰 종가: ${price:.2f}\n✅ 21일선 부근 지지\n⏰ {now_time.strftime('%H:%M')} EST"
-                send_telegram(msg)
-                sent_signals.add(key)
-                signals_found.append(ticker)
-                print(f"🎯 [눌림목] {ticker}")
-
-        # 돌파 (20일 고점 돌파)
-        if price > prev['High_20']:
+        # 돌파 우선 (더 강한 신호)
+        if price > last['High_20']:
             key = (ticker, "BREAKOUT", today)
             if key not in sent_signals:
                 msg = f"🚀 *[돌파] {ticker}*\n💰 종가: ${price:.2f}\n✅ 20일 고점 돌파\n⏰ {now_time.strftime('%H:%M')} EST"
@@ -159,6 +153,16 @@ def scan_action_points(st_tickers, trend_tickers, cache):
                 sent_signals.add(key)
                 signals_found.append(ticker)
                 print(f"🎯 [돌파] {ticker}")
+        
+        # 눌림목 (돌파 아닐 때만)
+        elif abs(price - last['EMA21']) / last['EMA21'] < 0.03:
+            key = (ticker, "PULLBACK", today)
+            if key not in sent_signals:
+                msg = f"📉 *[눌림목] {ticker}*\n💰 종가: ${price:.2f}\n✅ 21일선 부근 지지\n⏰ {now_time.strftime('%H:%M')} EST"
+                send_telegram(msg)
+                sent_signals.add(key)
+                signals_found.append(ticker)
+                print(f"🎯 [눌림목] {ticker}")
 
     save_sent_signals(sent_signals)
     
@@ -175,7 +179,6 @@ if __name__ == "__main__":
     print("🚀 실전 타점 브리핑 봇 (KST 14:00 전용)")
     print("=" * 60)
 
-    # 1. 시간 체크 (평일 오후 2시) - 테스트를 위해 주석 해제 필요시 사용
     kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
     is_kst_2pm = (kst_now.hour == 14 and 0 <= kst_now.minute <= 5)
     is_weekday = (kst_now.weekday() < 5)
@@ -219,7 +222,6 @@ if __name__ == "__main__":
 
         print(f"📦 총 {len(data_cache)}개 종목 데이터 준비 완료!")
 
-        # 티커 검증 및 오류 텔레그램 알림
         missing_tickers = [t for t in all_unique_tickers if t not in data_cache]
         
         if missing_tickers:
@@ -232,7 +234,6 @@ if __name__ == "__main__":
             if len(missing_tickers) > 15:
                 error_msg += f"\n... 외 {len(missing_tickers) - 15}개 더 있음 (콘솔 확인)"
             send_telegram(error_msg)
-            print("🚨 텔레그램으로 오류 알림을 전송했습니다.")
         else:
             print("✅ 모든 심볼이 정상적으로 데이터를 불러왔습니다.")
 
