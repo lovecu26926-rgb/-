@@ -27,7 +27,8 @@ def send_telegram(message):
         requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "Markdown"
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
         }, timeout=10)
     except Exception as e:
         print("텔레그램 오류:", e)
@@ -55,25 +56,127 @@ def save_sent_signals(signals):
         pass
 
 # =========================
-# CSV 로드
+# 📂 CSV 로드 (재무 데이터 포함)
 # =========================
-def load_tickers(csv_url):
+def load_tickers_with_fundamentals(csv_url):
+    """CSV에서 Symbol, EPS, 매출, 이익률 로드"""
     try:
         df = pd.read_csv(csv_url)
-        return [x.strip().upper() for x in df["Symbol"].dropna().astype(str)]
+        tickers = []
+        
+        # 컬럼명 매핑 (한글/영문 모두 대응)
+        col_map = {}
+        for col in df.columns:
+            if 'Symbol' in col or 'Ticker' in col:
+                col_map['symbol'] = col
+            elif 'EPS' in col or '희석' in col or '성장' in col:
+                col_map['eps'] = col
+            elif '매출' in col or 'Revenue' in col:
+                col_map['rev'] = col
+            elif '이익률' in col or 'Margin' in col or 'Profit' in col:
+                col_map['margin'] = col
+        
+        # 기본값 설정
+        symbol_col = col_map.get('symbol', df.columns[0])
+        eps_col = col_map.get('eps', None)
+        rev_col = col_map.get('rev', None)
+        margin_col = col_map.get('margin', None)
+        
+        for _, row in df.iterrows():
+            ticker = str(row[symbol_col]).strip().upper()
+            if not ticker:
+                continue
+                
+            item = {'symbol': ticker}
+            
+            # EPS 성장률
+            if eps_col and pd.notna(row[eps_col]):
+                try:
+                    item['eps_growth'] = float(row[eps_col])
+                except:
+                    item['eps_growth'] = 0
+            else:
+                item['eps_growth'] = 0
+            
+            # 매출 성장률
+            if rev_col and pd.notna(row[rev_col]):
+                try:
+                    item['rev_growth'] = float(row[rev_col])
+                except:
+                    item['rev_growth'] = 0
+            else:
+                item['rev_growth'] = 0
+            
+            # 이익률
+            if margin_col and pd.notna(row[margin_col]):
+                try:
+                    item['margin'] = float(row[margin_col])
+                except:
+                    item['margin'] = 0
+            else:
+                item['margin'] = 0
+            
+            tickers.append(item)
+        
+        print(f"  ✅ CSV 로드 완료: {len(tickers)}개 (EPS/매출/이익률 포함)")
+        return tickers
     except Exception as e:
-        print(f"CSV 오류 ({csv_url}):", e)
+        print(f"  ❌ CSV 오류: {e}")
         return []
 
 # =========================
-# 🔧 yfinance DataFrame 정리 (MultiIndex 제거)
+# 📊 성장 점수 계산
+# =========================
+def calculate_growth_score(eps_growth, rev_growth, margin):
+    """EPS 50% + 매출 30% + 이익률 20% (0~100점)"""
+    
+    # 1. EPS 점수 (50%)
+    if eps_growth >= 100:
+        eps_score = 100
+    elif eps_growth >= 50:
+        eps_score = 80
+    elif eps_growth >= 20:
+        eps_score = 50
+    elif eps_growth >= 0:
+        eps_score = 20
+    else:
+        eps_score = 0
+    
+    # 2. 매출 점수 (30%)
+    if rev_growth >= 50:
+        rev_score = 100
+    elif rev_growth >= 30:
+        rev_score = 70
+    elif rev_growth >= 10:
+        rev_score = 40
+    elif rev_growth >= 0:
+        rev_score = 20
+    else:
+        rev_score = 0
+    
+    # 3. 이익률 점수 (20%)
+    if margin >= 30:
+        margin_score = 100
+    elif margin >= 15:
+        margin_score = 70
+    elif margin >= 5:
+        margin_score = 40
+    elif margin >= 0:
+        margin_score = 20
+    else:
+        margin_score = 0
+    
+    # 가중치 적용
+    total = (eps_score * 0.5) + (rev_score * 0.3) + (margin_score * 0.2)
+    return round(total, 1)
+
+# =========================
+# 🔧 yfinance MultiIndex 처리
 # =========================
 def _flatten_df(df):
-    """MultiIndex 컬럼을 단일 레벨로 변환"""
     if df is None or df.empty:
         return df
     if isinstance(df.columns, pd.MultiIndex):
-        # 첫 번째 티커를 선택 (단일 종목이므로 첫 번째 레벨)
         ticker = df.columns.levels[1][0]
         df = df.xs(ticker, axis=1, level=1)
     return df
@@ -119,11 +222,8 @@ def calculate_supertrend(df, period=10, mult=3):
         else:
             trend[i] = trend[i-1]
 
-    # 🔥 1D 강제 변환 (broadcast 에러 방지)
-    trend = trend.flatten()
-
     df = df.copy()
-    df["trend"] = trend
+    df["trend"] = trend.flatten()
     return df
 
 # =========================
@@ -133,28 +233,18 @@ def check_trend_signal(df):
     if df is None or len(df) < 30:
         return False, None
 
-    df = df.copy()
-    # 모든 값은 스칼라로 추출
     close = float(df['Close'].iloc[-1])
     ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
     ma50 = float(df['Close'].rolling(50).mean().iloc[-1])
     high20 = float(df['High'].shift(1).rolling(20).max().iloc[-1])
 
-    # 눌림목 (20>50 + 3% 이내)
     is_uptrend = ma20 > ma50
     near_ma20 = abs(close - ma20) / ma20 < 0.03
     pullback = is_uptrend and near_ma20
-
-    # 돌파
     breakout = close > high20
 
     is_signal = pullback or breakout
-    detail = (
-        f"20일선: ${ma20:.2f} (이격: {abs(close-ma20)/ma20*100:.1f}%) | "
-        f"50일선: ${ma50:.2f} | "
-        f"20일고가: ${high20:.2f} | "
-        f"신호: {'눌림목' if pullback else '돌파' if breakout else '없음'}"
-    )
+    detail = f"{'돌파' if breakout else ''}{'눌림목' if pullback else ''}"
     return is_signal, detail
 
 # =========================
@@ -165,72 +255,151 @@ def check_supertrend_signal(df):
         return False, None
 
     df = calculate_supertrend(df)
-    # 스칼라 추출
     prev = bool(df["trend"].iloc[-2])
     curr = bool(df["trend"].iloc[-1])
     st_reversal = (not prev) and curr
 
     is_signal = st_reversal
-    detail = f"Supertrend 상승전환: {st_reversal}"
+    detail = f"Supertrend 상승전환"
     return is_signal, detail
+
+# =========================
+# 📱 페이지네이션 전송 (20개씩)
+# =========================
+def send_paginated_results(signal_results, mode_name, chunk_size=20):
+    """점수순 정렬 후 20개씩 페이지로 분할 전송"""
+    
+    if not signal_results:
+        send_telegram(f"📊 [{mode_name}] 오늘 발견된 신호가 없습니다.")
+        return
+    
+    # 점수 기준 정렬 (내림차순)
+    signal_results.sort(key=lambda x: x['total_score'], reverse=True)
+    total = len(signal_results)
+    
+    # 페이지 계산
+    total_pages = (total + chunk_size - 1) // chunk_size
+    
+    for page in range(total_pages):
+        start = page * chunk_size
+        end = min(start + chunk_size, total)
+        chunk = signal_results[start:end]
+        
+        # 헤더
+        if total_pages == 1:
+            msg = f"🏆 *[{mode_name}] 초고성장주 TOP {total} (점수순)*\n\n"
+        else:
+            msg = f"🏆 *[{mode_name}] 초고성장주 ({page+1}/{total_pages} 페이지)*\n"
+            msg += f"📊 {start+1} ~ {end}위 (총 {total}개)\n\n"
+        
+        # 종목 목록 (1줄 압축)
+        for idx, s in enumerate(chunk, start=start+1):
+            icon = "📈" if "돌파" in s['detail'] else "📉" if "눌림목" in s['detail'] else "🔄"
+            msg += (
+                f"{idx}. *{s['ticker']}* - {s['total_score']:.1f}점 "
+                f"| 💰${s['price']:.0f} | {icon}{s['detail']} "
+                f"| EPS+{s['eps']:.0f}% 매출+{s['rev']:.0f}%\n"
+            )
+        
+        # 푸터
+        msg += "\n" + "=" * 25 + "\n"
+        avg_score = sum(s['total_score'] for s in chunk) / len(chunk)
+        msg += f"📌 평균: {avg_score:.1f}점"
+        
+        if page == 0:
+            msg += f" | 🔥 1위: {signal_results[0]['ticker']} ({signal_results[0]['total_score']:.1f}점)"
+        
+        if page < total_pages - 1:
+            msg += f"\n📎 나머지 {total - end}개는 다음 메시지에서..."
+        else:
+            msg += f"\n✅ 모든 종목 전송 완료 (총 {total}개)"
+        
+        send_telegram(msg)
+        time.sleep(0.5)  # 연속 전송 제한 방지
 
 # =========================
 # 🔍 통합 스캔 엔진
 # =========================
 def scan_universe(csv_url, check_func, mode_name):
     print(f"\n📊 [{mode_name}] 스캔 시작...")
-
-    tickers = load_tickers(csv_url)
-    print(f"  종목수: {len(tickers)}개")
-
-    if not tickers:
+    
+    ticker_infos = load_tickers_with_fundamentals(csv_url)
+    print(f"  종목수: {len(ticker_infos)}개")
+    
+    if not ticker_infos:
         print(f"  ⚠️ {mode_name} 리스트 없음")
         return
-
+    
     sent_signals = load_sent_signals()
     today = str(date.today())
-    found = []
+    signal_results = []  # 점수 포함 결과 저장
 
-    for ticker in tickers:
+    for info in ticker_infos:
+        ticker = info['symbol']
         try:
-            # 데이터 다운로드
             df = yf.download(ticker, period="3mo", interval="1d", auto_adjust=True, progress=False)
             if df.empty:
                 continue
-
-            # MultiIndex 처리
+            
             df = _flatten_df(df)
             if df is None or len(df) < 30:
                 continue
-
-            # 신호 체크
+            
             is_signal, detail = check_func(df)
             if is_signal:
                 key = (ticker, mode_name, today)
                 if key not in sent_signals:
                     price = float(df['Close'].iloc[-1])
-                    msg = f"🚀 *{mode_name} 신호*\n\n종목: {ticker}\n종가: ${price:.2f}\n{detail}"
-                    send_telegram(msg)
+                    
+                    # 🔥 성장 점수 계산
+                    growth_score = calculate_growth_score(
+                        info.get('eps_growth', 0),
+                        info.get('rev_growth', 0),
+                        info.get('margin', 0)
+                    )
+                    
+                    # 기술 점수 (신호 유형별 가중치)
+                    tech_score = 5 if "돌파" in detail else 3 if "눌림목" in detail else 4
+                    
+                    # 종합 점수 (성장 70% + 기술 30%)
+                    total_score = round((growth_score * 0.7) + (tech_score * 0.3), 1)
+                    
+                    signal_results.append({
+                        'ticker': ticker,
+                        'price': price,
+                        'detail': detail,
+                        'eps': info.get('eps_growth', 0),
+                        'rev': info.get('rev_growth', 0),
+                        'margin': info.get('margin', 0),
+                        'growth_score': growth_score,
+                        'total_score': total_score
+                    })
+                    
                     sent_signals.add(key)
-                    found.append(ticker)
-                    print(f"  ✅ {ticker} 신호 발견")
-
+                    print(f"  ✅ {ticker} 신호 (점수: {total_score:.1f})")
+            
             time.sleep(0.3)
         except Exception as e:
             print(f"  ⚠️ {ticker} 오류: {e}")
-
+    
     save_sent_signals(sent_signals)
-    print(f"  📊 [{mode_name}] 총 {len(found)}개 신호 발견")
+    
+    # 🔥 페이지네이션 전송
+    send_paginated_results(signal_results, mode_name)
+    print(f"  📊 [{mode_name}] 총 {len(signal_results)}개 신호 발견")
 
 # =========================
 # 🚀 메인
 # =========================
 if __name__ == "__main__":
     print("=" * 50)
-    print("🚀 통합 스캐너 (추세추종 + Supertrend)")
+    print("🚀 통합 스캐너 (추세추종 + Supertrend + 점수)")
     print("=" * 50)
-
+    
+    # 1️⃣ 추세추종 스캔
     scan_universe(TREND_CSV, check_trend_signal, "추세추종")
+    
+    # 2️⃣ Supertrend 스캔
     scan_universe(SUPERTREND_CSV, check_supertrend_signal, "Supertrend")
-
+    
     print("\n✅ 전체 스캔 완료")
