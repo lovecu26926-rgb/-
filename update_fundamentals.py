@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import time
 
-FMP_API_KEY = "여기에_네_API키"
+FMP_API_KEY = "Us5oERwTgTB1pQFmxv5RW0e7uMVG8mjd"
 
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
