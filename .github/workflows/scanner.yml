@@ -1,6 +1,10 @@
 name: Closing Briefing Scanner
 
 on:
+  # 🔥 코드를 푸시(Push)할 때마다 자동 실행 (테스트용)
+  push:
+    branches: [ main ]
+  
   # 🔥 매일 한국 시간 오후 2시 (UTC 05:00) - 평일(월~금)만 실행
   schedule:
     - cron: '0 5 * * 1-5'
@@ -13,27 +17,21 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      # 1. 저장소 코드 가져오기
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 파이썬 환경 설정
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 3. 필요 라이브러리 설치 (yfinance, pandas 등)
       - name: Install dependencies
         run: |
           pip install yfinance pandas numpy requests pytz
 
-      # 4. 스크리너 실행 (GitHub Secrets가 자동으로 환경변수로 주입됨)
       - name: Run scanner
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ST_CSV_URL: ${{ secrets.ST_CSV_URL }}
-          TREND_CSV_URL: ${{ secrets.TREND_CSV_URL }}
         run: |
           python scanner.py
