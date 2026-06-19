@@ -17,7 +17,8 @@ FMP_KEY = os.environ.get("FMP_API_KEY")
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
 
-FMP_CACHE = "fmp_cache.json"
+# 🔥 수정: fmp_cache.json → fundamentals.json
+FMP_CACHE = "fundamentals.json"
 SENT_FILE = "sent_signals.json"
 
 # =========================
@@ -54,94 +55,31 @@ def save_sent(data):
         json.dump([list(x) for x in data], f)
 
 # =========================
-# 🔥 FMP FUNDAMENTALS (수정됨)
+# 🔥 FMP FUNDAMENTALS (fundamentals.json 읽기)
 # =========================
 def get_fmp_data(ticker):
-    today = str(date.today())
-
-    # 1. 캐시 확인
     cache = {}
     if os.path.exists(FMP_CACHE):
         try:
-            cache = json.load(open(FMP_CACHE))
+            with open(FMP_CACHE, "r") as f:
+                cache = json.load(f)
         except:
             cache = {}
-
-    if ticker in cache and cache[ticker].get("date") == today:
-        return cache[ticker]["data"]
-
-    try:
-        # 2. 연간 손익계산서 (최근 2년, period=annual 필수!)
-        income_url = f"https://financialmodelingprep.com/api/v3/income-statement/{ticker}?apikey={FMP_KEY}&limit=2&period=annual"
-        income_resp = requests.get(income_url, timeout=10)
-        income_data = income_resp.json()
-
-        eps_growth = 0
-        rev_growth = 0
-
-        if income_data and len(income_data) >= 2:
-            latest = income_data[0]
-            previous = income_data[1]
-
-            # 매출 성장률 (YoY)
-            rev_l = latest.get('revenue', 0)
-            rev_p = previous.get('revenue', 1)
-            if rev_p > 0:
-                rev_growth = ((rev_l - rev_p) / rev_p) * 100
-
-            # EPS 성장률 (YoY)
-            eps_l = latest.get('eps', 0)
-            eps_p = previous.get('eps', 1)
-            if eps_p > 0:
-                eps_growth = ((eps_l - eps_p) / eps_p) * 100
-            elif eps_p < 0 and eps_l > eps_p:
-                # 적자→흑자 전환
-                eps_growth = 999.0  # 큰 값으로 표시 (스코어에서 100으로 캡)
-
-        # 3. ROE 가져오기 (프로필)
-        profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_KEY}"
-        profile_resp = requests.get(profile_url, timeout=10)
-        profile_data = profile_resp.json()
-        roe = 0
-        if profile_data and isinstance(profile_data, list):
-            # ROE는 소수점(예: 0.15)이므로 * 100
-            roe = profile_data[0].get('roe', 0) * 100
-
-        data = {
-            "eps_growth": round(eps_growth, 2),
-            "rev_growth": round(rev_growth, 2),
-            "roe": round(roe, 2)
-        }
-
-        # 캐시 저장
-        cache[ticker] = {"date": today, "data": data}
-        with open(FMP_CACHE, "w") as f:
-            json.dump(cache, f)
-
-        return data
-
-    except Exception as e:
-        print(f"⚠️ FMP 오류 ({ticker}): {e}")
-        return {"eps_growth": 0, "rev_growth": 0, "roe": 0}
+    return cache.get(ticker, {"eps_growth": 0, "rev_growth": 0, "roe": 0})
 
 # =========================
 # SCORE SYSTEM
 # =========================
 def growth_score(f):
-    eps = f["eps_growth"]
-    rev = f["rev_growth"]
-    roe = f["roe"]
+    eps = f.get("eps_growth", 0)
+    rev = f.get("rev_growth", 0)
+    roe = f.get("roe", 0)
 
-    # 캡 (최대 100점, 음수는 0점 처리)
     eps_scaled = min(max(eps, 0), 100)
     rev_scaled = min(max(rev, 0), 100)
     roe_scaled = min(max(roe, 0), 100)
 
-    return (
-        eps_scaled * 0.5 +
-        rev_scaled * 0.3 +
-        roe_scaled * 0.2
-    )
+    return (eps_scaled * 0.5 + rev_scaled * 0.3 + roe_scaled * 0.2)
 
 def tech_score(signal_type):
     if "BREAKOUT" in signal_type:
@@ -161,11 +99,9 @@ def check_signal(df):
     ma20 = close.rolling(20).mean()
     ma50 = close.rolling(50).mean()
 
-    # 전고점 돌파 (전일 기준 20일 최고가)
     high20 = df["High"].rolling(20).max().shift(1)
     breakout = close.iloc[-1] > high20.iloc[-1]
 
-    # 눌림목 (20>50 정배열 + 3% 이내)
     pullback = ma20.iloc[-1] > ma50.iloc[-1] and abs(close.iloc[-1] - ma20.iloc[-1]) / ma20.iloc[-1] < 0.03
 
     if breakout:
@@ -192,12 +128,10 @@ def scan(csv_url, name):
 
     for t in tickers:
         try:
-            # yfinance 다운로드
             df = yf.download(t, period="3mo", interval="1d", auto_adjust=True, progress=False)
             if df.empty:
                 continue
 
-            # MultiIndex 처리 (간소화)
             if isinstance(df.columns, pd.MultiIndex):
                 df = df.xs(t, axis=1, level=1)
 
@@ -210,8 +144,6 @@ def scan(csv_url, name):
                 continue
 
             price = float(df["Close"].iloc[-1])
-
-            # FMP 데이터 (캐시)
             fmp = get_fmp_data(t)
 
             g_score = growth_score(fmp)
@@ -238,7 +170,6 @@ def scan(csv_url, name):
 
     save_sent(sent)
 
-    # TOP 20 정렬
     results.sort(key=lambda x: x["total"], reverse=True)
 
     if not results:
