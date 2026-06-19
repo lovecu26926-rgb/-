@@ -1,53 +1,73 @@
 import requests
 import os
-import json
 
-# API 키 입력
-API_KEY = os.environ.get("FINNHUB_API_KEY")
+API_KEY = os.environ.get("FINNHUB_API_KEY") or "YOUR_FINNHUB_TOKEN"
 
-if not API_KEY:
-    API_KEY = "YOUR_FINNHUB_TOKEN_HERE"  # 직접 입력해도 됨
-
-# 대표 종목 5개 테스트
 tickers = ["AAPL", "NVDA", "MU", "AMD", "TSLA"]
 
-print("📊 Finnhub API 테스트 시작\n")
+print("📊 Finnhub 성장률 계산 시작\n")
+
+
+def calc_growth(new, old):
+    if new is None or old is None or old == 0:
+        return None
+    return ((new - old) / abs(old)) * 100
+
 
 for ticker in tickers:
-    url = f"https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={API_KEY}"
-    
+    print(f"🔹 {ticker}")
+
+    url = f"https://finnhub.io/api/v1/stock/financials-reported?symbol={ticker}&token={API_KEY}"
+
     try:
         resp = requests.get(url, timeout=10)
-        print(f"🔹 {ticker} → 상태 코드: {resp.status_code}")
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            if data and 'metric' in data:
-                metric = data['metric']
-                
-                # Finnhub는 보통 소수점(0.15)으로 오면 ×100, 이미 퍼센트(15.0)로 오면 그대로
-                def get_val(key):
-                    val = metric.get(key, None)
-                    if val is None:
-                        return "없음"
-                    if isinstance(val, (int, float)):
-                        if -1 < val < 1:
-                            return f"{round(val * 100, 2)}%"
-                        else:
-                            return f"{round(val, 2)}%"
-                    return str(val)
-                
-                rev = get_val('revenueGrowth')
-                eps = get_val('epsGrowth')
-                
-                print(f"   📈 매출 성장: {rev}")
-                print(f"   📈 EPS 성장: {eps}")
-                print(f"   📦 metric 키 개수: {len(metric)}개")
-                print()
-            else:
-                print("   ❌ 'metric' 필드 없음\n")
+
+        if resp.status_code != 200:
+            print("   ❌ API 오류")
+            continue
+
+        data = resp.json()
+
+        # 연간 데이터
+        reports = data.get("data", [])
+
+        if len(reports) < 2:
+            print("   ❌ 데이터 부족")
+            continue
+
+        latest = reports[0]
+        prev = reports[1]
+
+        # Finnhub 구조 (케이스별 방어)
+        def get_val(obj, key):
+            try:
+                return obj.get("report", {}).get(key, None)
+            except:
+                return None
+
+        # 🔥 매출 / EPS
+        revenue_now = get_val(latest, "revenue")
+        revenue_prev = get_val(prev, "revenue")
+
+        eps_now = get_val(latest, "eps")
+        eps_prev = get_val(prev, "eps")
+
+        # 성장률 계산
+        revenue_growth = calc_growth(revenue_now, revenue_prev)
+        eps_growth = calc_growth(eps_now, eps_prev)
+
+        # 출력
+        if revenue_growth is not None:
+            print(f"   📈 매출 성장: {round(revenue_growth, 2)}%")
         else:
-            print(f"   ❌ 오류 응답: {resp.text[:100]}\n")
-            
+            print("   📈 매출 성장: 없음")
+
+        if eps_growth is not None:
+            print(f"   📈 EPS 성장: {round(eps_growth, 2)}%")
+        else:
+            print("   📈 EPS 성장: 없음")
+
+        print()
+
     except Exception as e:
-        print(f"   ❌ 예외 발생: {e}\n")
+        print(f"   ❌ 에러: {e}\n")
