@@ -1,29 +1,27 @@
 import requests
 import os
 
-# GitHub Secrets에서 API 키를 가져옵니다
 API_KEY = os.environ.get("FMP_API_KEY")
 
 if not API_KEY:
-    print("❌ FMP_API_KEY 환경변수가 없습니다.")
+    print("❌ FMP_API_KEY 없음")
     exit(1)
 
-# 프로필 엔드포인트 테스트 (가장 기본)
-url = f"https://financialmodelingprep.com/api/v3/profile/AAPL?apikey={API_KEY}"
+# 1️⃣ stable/profile 테스트
+url = f"https://financialmodelingprep.com/stable/profile?symbol=AAPL&apikey={API_KEY}"
+response = requests.get(url, timeout=10)
 
-try:
-    response = requests.get(url, timeout=10)
-    print(f"📡 상태 코드: {response.status_code}")
+print(f"📡 상태 코드: {response.status_code}")
 
-    if response.status_code == 200:
-        data = response.json()
-        if data:
-            print("✅ API 키 정상! 프로필 데이터 수신 성공")
-            print(f"회사명: {data[0].get('companyName')}")
-            print(f"이익률: {data[0].get('profitMargin')}")
-        else:
-            print("❌ 데이터가 비어있음")
+if response.status_code == 200:
+    data = response.json()
+    if data:
+        print("✅ stable/profile 정상!")
+        print(f"회사명: {data[0].get('companyName')}")
+        print(f"이익률: {data[0].get('profitMargin')}")
     else:
-        print(f"❌ 오류 응답: {response.text}")
-except Exception as e:
-    print(f"❌ 요청 실패: {e}")
+        print("❌ 데이터 없음")
+elif response.status_code == 403:
+    print("❌ 403 오류: stable 엔드포인트 접근 권한 없음 (API 키가 유효한지 확인)")
+else:
+    print(f"❌ 오류 응답: {response.text[:200]}")
