@@ -1,0 +1,27 @@
+name: Test FMP API
+
+on:
+  workflow_dispatch:  # 수동 실행 전용
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Run FMP test
+        env:
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: python test_fmp.py
