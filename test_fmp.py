@@ -1,27 +1,23 @@
 import requests
 import os
 
-API_KEY = os.environ.get("FMP_API_KEY")
+API_KEY = os.environ.get("FINNHUB_API_KEY")
 
 if not API_KEY:
-    print("❌ FMP_API_KEY 없음")
-    exit(1)
+    API_KEY = "YOUR_FINNHUB_TOKEN_HERE"  # 직접 입력
 
-# 1️⃣ stable/profile 테스트
-url = f"https://financialmodelingprep.com/stable/profile?symbol=AAPL&apikey={API_KEY}"
-response = requests.get(url, timeout=10)
+# AAPL로 테스트
+url = f"https://finnhub.io/api/v1/stock/metric?symbol=AAPL&metric=all&token={API_KEY}"
+resp = requests.get(url)
+print(f"상태 코드: {resp.status_code}")
 
-print(f"📡 상태 코드: {response.status_code}")
-
-if response.status_code == 200:
-    data = response.json()
-    if data:
-        print("✅ stable/profile 정상!")
-        print(f"회사명: {data[0].get('companyName')}")
-        print(f"이익률: {data[0].get('profitMargin')}")
+if resp.status_code == 200:
+    data = resp.json()
+    if data and 'metric' in data:
+        print("✅ Finnhub 정상!")
+        print(f"ROE: {data['metric'].get('roe', '없음')}")
+        print(f"이익률: {data['metric'].get('netProfitMargin', '없음')}")
     else:
-        print("❌ 데이터 없음")
-elif response.status_code == 403:
-    print("❌ 403 오류: stable 엔드포인트 접근 권한 없음 (API 키가 유효한지 확인)")
+        print("❌ 데이터 구조 이상")
 else:
-    print(f"❌ 오류 응답: {response.text[:200]}")
+    print(f"❌ 오류: {resp.text}")
