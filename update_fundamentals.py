@@ -4,9 +4,12 @@ import pandas as pd
 import time
 import os
 
-# 🔑 API 키는 환경 변수로 관리하세요 (보안)
-# 직접 입력 시에는 여기에 본인 키를 넣으세요
-FMP_API_KEY = os.environ.get(Us5oERwTgTB1pQFmxv5RW0e7uMVG8mjd)
+# 🔑 API 키는 환경 변수로 관리 (GitHub Secrets 권장)
+FMP_API_KEY = os.environ.get("FMP_API_KEY")  # ← "FMP_API_KEY"로 수정
+
+# 만약 환경 변수가 없으면 직접 입력 (테스트용)
+if not FMP_API_KEY:
+    FMP_API_KEY = "YOUR_API_KEY_HERE"  # 직접 입력 시 여기에 키를 넣으세요
 
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
@@ -45,7 +48,7 @@ def fetch_fmp(ticker):
         if rev_prev > 0:
             rev_growth = ((rev_latest - rev_prev) / rev_prev) * 100
         else:
-            rev_growth = 0  # 분모가 0이면 0으로 처리 (또는 None)
+            rev_growth = 0  # 분모가 0이면 0으로 처리
 
         # --- EPS 성장률 (음수/0 방어) ---
         eps_latest = latest.get('eps', 0)
