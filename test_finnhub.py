@@ -10,6 +10,28 @@ def growth(new, old):
         return None
     return (new - old) / abs(old) * 100
 
+
+def find_value(report, key):
+    # 여러 구조 대응
+    paths = [
+        ["ic", key],
+        ["incomeStatement", key],
+        [key]
+    ]
+
+    for path in paths:
+        cur = report
+        try:
+            for p in path:
+                cur = cur.get(p, {})
+            if isinstance(cur, (int, float)):
+                return cur
+        except:
+            pass
+
+    return None
+
+
 for t in tickers:
     url = f"https://finnhub.io/api/v1/stock/financials-reported?symbol={t}&token={API_KEY}"
     r = requests.get(url).json()
@@ -17,16 +39,22 @@ for t in tickers:
     try:
         data = r["data"]
 
-        latest = data[0]["report"]["ic"]
-        prev = data[1]["report"]["ic"]
+        latest = data[0]["report"]
+        prev = data[1]["report"]
 
-        rev = growth(latest.get("revenue"), prev.get("revenue"))
-        eps = growth(latest.get("eps"), prev.get("eps"))
+        rev_now = find_value(latest, "revenue")
+        rev_old = find_value(prev, "revenue")
+
+        eps_now = find_value(latest, "eps")
+        eps_old = find_value(prev, "eps")
+
+        rev_growth = growth(rev_now, rev_old)
+        eps_growth = growth(eps_now, eps_old)
 
         print(f"\n{t}")
 
-        print("매출성장:", f"{rev:.2f}%" if rev is not None else "없음")
-        print("EPS성장:", f"{eps:.2f}%" if eps is not None else "없음")
+        print("매출성장:", f"{rev_growth:.2f}%" if rev_growth is not None else "없음")
+        print("EPS성장:", f"{eps_growth:.2f}%" if eps_growth is not None else "없음")
 
     except Exception as e:
-        print(t, "파싱 실패:", e)
+        print(t, "데이터 구조 실패:", e)
