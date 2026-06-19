@@ -1,10 +1,11 @@
 import requests
-import os
 import time
+import os
 
 API_KEY = os.getenv("FMP_API_KEY") or "YOUR_KEY"
 
-tickers = [...]  # 150개
+# 👉 여기에 150개 넣으면 됨
+tickers = ["AAPL", "NVDA", "TSLA", "AMD", "MU"]
 
 def growth(now, prev):
     if now is None or prev is None or prev == 0:
@@ -14,30 +15,56 @@ def growth(now, prev):
 
 def fetch_fmp(ticker):
     url = f"https://financialmodelingprep.com/api/v3/income-statement/{ticker}?limit=2&apikey={API_KEY}"
-    r = requests.get(url).json()
+    
+    try:
+        r = requests.get(url, timeout=10).json()
 
-    if not isinstance(r, list) or len(r) < 2:
+        if not isinstance(r, list) or len(r) < 2:
+            return None
+
+        now = r[0]
+        prev = r[1]
+
+        # revenue
+        rev_now = now.get("revenue")
+        rev_prev = prev.get("revenue")
+
+        # EPS (fallback 포함)
+        eps_now = now.get("eps") or now.get("epsdiluted")
+        eps_prev = prev.get("eps") or prev.get("epsdiluted")
+
+        rev_growth = growth(rev_now, rev_prev)
+        eps_growth = growth(eps_now, eps_prev)
+
+        return rev_growth, eps_growth
+
+    except:
         return None
 
-    now = r[0]
-    prev = r[1]
 
-    rev_now = now.get("revenue")
-    rev_prev = prev.get("revenue")
+print("🚀 FMP Growth Scanner Start\n")
 
-    eps_now = now.get("eps")
-    eps_prev = prev.get("eps")
-
-    return {
-        "rev_growth": growth(rev_now, rev_prev),
-        "eps_growth": growth(eps_now, eps_prev),
-    }
-
+results = []
 
 for i, t in enumerate(tickers, 1):
-    res = fetch_fmp(t)
+    data = fetch_fmp(t)
 
-    if res:
-        print(f"[{i}] {t} | 매출 {res['rev_growth']:.1f}% | EPS {res['eps_growth']:.1f}%")
+    if data:
+        rev, eps = data
 
-    time.sleep(0.3)  # 250 calls/day 안전
+        if rev is not None and eps is not None:
+            print(f"[{i}] {t} | 매출 {rev:.1f}% | EPS {eps:.1f}%")
+            
+            # 🔥 필터 (원하면 조정)
+            if rev > 10 and eps > 10:
+                results.append((t, rev, eps))
+
+    else:
+        print(f"[{i}] {t} | 데이터 없음")
+
+    time.sleep(0.5)  # 안전 rate limit
+
+
+print("\n🔥 FINAL PICKS")
+for r in results:
+    print(r)
