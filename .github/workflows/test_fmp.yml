@@ -1,14 +1,12 @@
-name: Test FMP API
+name: Test Finnhub API
 
 on:
   workflow_dispatch:  # 수동 실행 전용
 
-permissions:
-  contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,7 +19,7 @@ jobs:
       - name: Install requests
         run: pip install requests
 
-      - name: Run FMP test
+      - name: Run Finnhub test
         env:
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-        run: python test_fmp.py
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: python test_finnhub.py
