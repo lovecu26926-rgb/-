@@ -12,7 +12,7 @@ from datetime import date
 # =========================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-FMP_KEY = os.environ.get(Us5oERwTgTB1pQFmxv5RW0e7uMVG8mjd)
+FMP_KEY = os.environ.get("FMP_API_KEY")
 
 TREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/trend_universe.csv"
 SUPERTREND_CSV = "https://raw.githubusercontent.com/lovecu26926-rgb/-/main/supertrend_universe.csv"
