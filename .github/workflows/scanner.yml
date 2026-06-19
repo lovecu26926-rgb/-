@@ -1,15 +1,22 @@
-name: Closing Briefing Scanner
+name: US Market Session Scanner (KST Schedule)
 
 on:
-  # 🔥 코드를 푸시(Push)할 때마다 자동 실행 (테스트용)
   push:
     branches: [ main ]
   
-  # 🔥 매일 한국 시간 오후 2시 (UTC 05:00) - 평일(월~금)만 실행
   schedule:
+    # ① 장전 데이터 (전일 종가 기준) - 한국 오후 2시 (UTC 05:00) ★고정★
     - cron: '0 5 * * 1-5'
+    
+    # ② 미국 장 시작 직후 - 한국 밤 11시 30분 (UTC 14:30)
+    - cron: '30 14 * * 1-5'
+    
+    # ③ 미국 장중 오후 - 한국 새벽 2시 (UTC 17:00)
+    - cron: '0 17 * * 1-5'
+    
+    # ④ 미국 장 마감 1시간 전 - 한국 새벽 4시 (UTC 19:00)
+    - cron: '0 19 * * 1-5'
   
-  # 🔥 수동 실행 버튼 (Actions 탭에서 직접 실행 가능)
   workflow_dispatch:
 
 jobs:
