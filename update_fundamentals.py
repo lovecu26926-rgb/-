@@ -1,11 +1,14 @@
 import requests
 import time
 import os
+import json
 
 API_KEY = os.getenv("FMP_API_KEY") or "YOUR_KEY"
+CACHE_FILE = "fundamentals.json"
 
-# 👉 여기에 150개 넣으면 됨
+# 👉 여기에 티커 채우기 (1티커=1콜이라 무료 250콜 한도 안에서 운용)
 tickers = ["AAPL", "NVDA", "TSLA", "AMD", "MU"]
+
 
 def growth(now, prev):
     if now is None or prev is None or prev == 0:
@@ -21,7 +24,7 @@ def fetch_fmp(ticker):
 
         if not isinstance(r, list) or len(r) < 2:
             print(f"  ⚠️ {ticker} 응답 이상함: {r}")
-            return None
+            return None, None
 
         now = r[0]
         prev = r[1]
@@ -39,28 +42,38 @@ def fetch_fmp(ticker):
 
     except Exception as e:
         print(f"  ⚠️ {ticker} 에러: {e}")
-        return None
+        return None, None
 
 
-print("🚀 FMP Growth Scanner Start\n")
+print("🚀 FMP Growth Cache Builder Start\n")
 
-results = []
+fundamentals = {}
 
 for i, t in enumerate(tickers, 1):
-    data = fetch_fmp(t)
+    rev, eps = fetch_fmp(t)
 
-    if data:
-        rev, eps = data
-        if rev is not None and eps is not None:
-            print(f"[{i}] {t} | 매출 {rev:.1f}% | EPS {eps:.1f}%")
-            if rev > 10 and eps > 10:
-                results.append((t, rev, eps))
+    # scanner.py가 fund.get("revenue_growth", "N/A") 식으로 조회하니까
+    # 키가 없을 때뿐 아니라 값이 없을 때도 "N/A"로 통일해둠
+    fundamentals[t] = {
+        "revenue_growth": round(rev, 1) if rev is not None else "N/A",
+        "eps_growth": round(eps, 1) if eps is not None else "N/A",
+    }
+
+    if rev is not None and eps is not None:
+        print(f"[{i}] {t} | 매출 {rev:.1f}% | EPS {eps:.1f}%")
     else:
         print(f"[{i}] {t} | 데이터 없음")
 
     time.sleep(0.5)
 
+with open(CACHE_FILE, "w") as f:
+    json.dump(fundamentals, f, ensure_ascii=False, indent=2)
 
-print("\n🔥 FINAL PICKS")
-for r in results:
-    print(r)
+print(f"\n💾 {CACHE_FILE} 저장 완료 ({len(fundamentals)}개 종목)")
+
+print("\n🔥 매출/EPS 둘 다 10% 이상")
+for t, d in fundamentals.items():
+    rev = d["revenue_growth"]
+    eps = d["eps_growth"]
+    if rev != "N/A" and eps != "N/A" and rev > 10 and eps > 10:
+        print(f"  {t} | 매출 {rev}% | EPS {eps}%")
