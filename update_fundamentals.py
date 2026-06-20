@@ -14,22 +14,21 @@ def growth(now, prev):
 
 
 def fetch_fmp(ticker):
-    url = f"https://financialmodelingprep.com/api/v3/income-statement/{ticker}?limit=2&apikey={API_KEY}"
-    
+    url = f"https://financialmodelingprep.com/stable/income-statement?symbol={ticker}&limit=2&apikey={API_KEY}"
+
     try:
         r = requests.get(url, timeout=10).json()
 
         if not isinstance(r, list) or len(r) < 2:
+            print(f"  ⚠️ {ticker} 응답 이상함: {r}")
             return None
 
         now = r[0]
         prev = r[1]
 
-        # revenue
         rev_now = now.get("revenue")
         rev_prev = prev.get("revenue")
 
-        # EPS (fallback 포함)
         eps_now = now.get("eps") or now.get("epsdiluted")
         eps_prev = prev.get("eps") or prev.get("epsdiluted")
 
@@ -38,7 +37,8 @@ def fetch_fmp(ticker):
 
         return rev_growth, eps_growth
 
-    except:
+    except Exception as e:
+        print(f"  ⚠️ {ticker} 에러: {e}")
         return None
 
 
@@ -51,18 +51,14 @@ for i, t in enumerate(tickers, 1):
 
     if data:
         rev, eps = data
-
         if rev is not None and eps is not None:
             print(f"[{i}] {t} | 매출 {rev:.1f}% | EPS {eps:.1f}%")
-            
-            # 🔥 필터 (원하면 조정)
             if rev > 10 and eps > 10:
                 results.append((t, rev, eps))
-
     else:
         print(f"[{i}] {t} | 데이터 없음")
 
-    time.sleep(0.5)  # 안전 rate limit
+    time.sleep(0.5)
 
 
 print("\n🔥 FINAL PICKS")
