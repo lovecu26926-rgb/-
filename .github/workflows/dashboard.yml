@@ -2,16 +2,15 @@ name: Market Dashboard
 
 on:
   schedule:
-    # 미국 동부 기준 16:30 실행 (서머타임/동계 대응)
-    # UTC 20:30 = 미국 동부 16:30 (서머타임, 3월~11월)
-    - cron: '30 20 * * 1-5'
-    # UTC 21:30 = 미국 동부 16:30 (동계, 11월~3월)
-    - cron: '30 21 * * 1-5'
+    # 🇰🇷 KST 14:30 = UTC 05:30 (월~금)
+    - cron: '30 5 * * 1-5'
+
   workflow_dispatch:
 
 jobs:
   dashboard:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +19,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install yfinance requests pytz numpy pandas
+        run: |
+          pip install --upgrade pip
+          pip install yfinance requests pytz numpy pandas lxml
 
       - name: Run dashboard
         run: python market_dashboard.py
