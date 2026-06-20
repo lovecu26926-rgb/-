@@ -2,7 +2,7 @@ name: Market Dashboard
 
 on:
   schedule:
-    # 🇰🇷 KST 14:30 = UTC 05:30 (월~금)
+    # 🇰🇷 KST 14:30 = UTC 05:30
     - cron: '30 5 * * 1-5'
 
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
           pip install --upgrade pip
           pip install yfinance requests pytz numpy pandas lxml
 
-      - name: Run dashboard
+      - name: Run (PROD)
         run: python market_dashboard.py
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
