@@ -21,6 +21,13 @@ def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}")
 
+# ==================== SAFE SCALAR ====================
+def s(x):
+    try:
+        return float(x)
+    except:
+        return 0.0
+
 # ==================== TELEGRAM ====================
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -56,6 +63,7 @@ def fetch_from_fmp(ticker):
 
     return {"rev_growth": 0, "eps_growth": 0}
 
+
 def get_fmp(ticker):
     if os.path.exists(FMP_CACHE):
         with open(FMP_CACHE, "r") as f:
@@ -63,10 +71,11 @@ def get_fmp(ticker):
         return data.get(ticker, {"rev_growth": 0, "eps_growth": 0})
     return {"rev_growth": 0, "eps_growth": 0}
 
+
 def score_growth(f):
     return f["rev_growth"] * 0.4 + f["eps_growth"] * 0.6
 
-# ==================== TECH ====================
+# ==================== TECH SAFE ====================
 def score_trend(df):
     close = df["Close"]
     ma20 = close.rolling(20).mean()
@@ -76,18 +85,23 @@ def score_trend(df):
     if len(df) < 60:
         return 0, None
 
+    c = s(close.iloc[-1])
+    m20 = s(ma20.iloc[-1])
+    m50 = s(ma50.iloc[-1])
+    h20 = s(high20.iloc[-1])
+
     score = 0
     sig = []
 
-    if close.iloc[-1] >= high20.iloc[-1] * 0.98:
+    if c >= h20 * 0.98:
         score += 60
         sig.append("BREAKOUT")
 
-    if ma20.iloc[-1] > ma50.iloc[-1]:
+    if m20 > m50:
         score += 50
         sig.append("UPTREND")
 
-    if abs(close.iloc[-1] - ma20.iloc[-1]) / ma20.iloc[-1] < 0.02:
+    if m20 != 0 and abs(c - m20) / m20 < 0.02:
         score += 40
         sig.append("PULLBACK")
 
@@ -110,9 +124,13 @@ def score_supertrend(df):
     trend = [1]
 
     for i in range(1, len(df)):
-        if close.iloc[i] > upper.iloc[i-1]:
+        c = s(close.iloc[i])
+        u = s(upper.iloc[i-1])
+        l = s(lower.iloc[i-1])
+
+        if c > u:
             trend.append(1)
-        elif close.iloc[i] < lower.iloc[i-1]:
+        elif c < l:
             trend.append(-1)
         else:
             trend.append(trend[-1])
@@ -122,7 +140,7 @@ def score_supertrend(df):
 
     return 0, None
 
-# ==================== SCAN ====================
+# ==================== SCAN SAFE ====================
 def scan(url, name, limit):
     tickers = pd.read_csv(url)["Symbol"].dropna().str.upper().tolist()
     results = []
@@ -140,11 +158,11 @@ def scan(url, name, limit):
                 threads=False
             )
 
-            log(f"{t} df_len={0 if df is None else len(df)}")
-
             if df is None or df.empty:
                 log(f"[SKIP EMPTY] {t}")
                 continue
+
+            df = df.dropna()
 
             if name == "TREND":
                 tech, sig = score_trend(df)
@@ -152,7 +170,6 @@ def scan(url, name, limit):
                 tech, sig = score_supertrend(df)
 
             if not sig:
-                log(f"[NO SIGNAL] {t}")
                 continue
 
             log(f"[SIGNAL] {t} {sig}")
@@ -167,7 +184,7 @@ def scan(url, name, limit):
 
             results.append((t, final_score, g, tech, sig))
 
-            time.sleep(0.15)
+            time.sleep(0.12)
 
         except Exception as e:
             log(f"[ERROR] {t} {e}")
@@ -176,7 +193,7 @@ def scan(url, name, limit):
     top = results[:limit]
 
     if not top:
-        log(f"[{name}] NO TOP RESULTS")
+        log(f"[{name}] NO SIGNALS")
         return
 
     msg = f"[{name}] TOP {len(top)}\n\n"
