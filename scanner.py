@@ -185,22 +185,6 @@ def percentile_rank(vals):
     return out
 
 # =========================
-# 🔥 ROE 필터 통과 여부 (점수에는 미반영, 결과 포함/제외만 결정)
-# =========================
-def passes_roe_filter(ticker):
-    if ROE_MIN_FILTER is None:
-        return True
-
-    fund = fmp_data.get(ticker, {})
-    roe = fund.get("roe", "N/A")
-
-    if roe == "N/A" or roe is None:
-        # 데이터 없는 종목은 필터링하지 않고 통과시킴 (캐시 누락 종목 배제 방지)
-        return True
-
-    return roe >= ROE_MIN_FILTER
-
-# =========================
 # 합성 점수 (RS/모멘텀 + 거래량 가중) 계산 후 정렬
 # ROE는 점수 계산에 포함되지 않음 - 표시/필터 전용
 # =========================
@@ -247,15 +231,9 @@ def scan():
     if ROE_MIN_FILTER is not None:
         print(f"[FILTER] ROE >= {ROE_MIN_FILTER}% 미만 종목 제외 (N/A는 통과)")
 
-    excluded_by_roe = 0
-
     for t in tickers:
         try:
-            # 🔥 ROE 필터 - 신호 계산 전에 먼저 거름 (불필요한 계산 절약)
-            if not passes_roe_filter(t):
-                excluded_by_roe += 1
-                continue
-
+     
             df = yf.download(t, period="1y", auto_adjust=True, progress=False)
 
             if df is None or df.empty:
