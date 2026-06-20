@@ -6,7 +6,16 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 import pytz
+def scan(url, name, limit):
+    tickers = pd.read_csv(url)["Symbol"].dropna().str.upper().tolist()
+    
+    # 👇 이거 추가 (티커 개수 출력)
+    print(f"[DEBUG] {name} 리스트에서 불러온 종목 개수: {len(tickers)}")
+    if len(tickers) > 0:
+        print(f"[DEBUG] 첫 5개: {tickers[:5]}")  # 상위 5개만 보여줌
 
+    results = []
+    # ... 이하 생략 ...
 # ==================== 1. 환경 변수 ====================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
