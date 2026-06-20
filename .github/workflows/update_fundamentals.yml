@@ -29,7 +29,7 @@ jobs:
 
       - name: Run fundamentals update
         env:
-          FMP_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FMP_API_KEY: ${{ secrets.fmp_API_KEY }}
         run: |
           python update_fundamentals.py
 
