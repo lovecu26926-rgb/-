@@ -16,6 +16,10 @@ FMP_CACHE_FILE = "fundamentals.json"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# 🔥 ROE 필터 (점수엔 미반영, 통과/표시 전용)
+# None 이면 필터링 안 함, 숫자면 그 값 미만(ROE 기준) 종목은 결과에서 제외
+ROE_MIN_FILTER = 0  # 예: 0 -> ROE가 N/A 이거나 음수면 제외. 끄려면 None으로 변경
+
 # 카테고리별 거래량 방향: True=거래량 높을수록 좋음(돌파 확인), False=낮을수록 좋음(매도세 없음)
 VOL_FAVORS_HIGH = {
     "돌파": True,
@@ -24,7 +28,7 @@ VOL_FAVORS_HIGH = {
     "추세전환": True,
 }
 
-# 합성 점수 가중치 (RS/모멘텀 : 거래량)
+# 합성 점수 가중치 (RS/모멘텀 : 거래량) - ROE는 점수에 미반영
 RS_WEIGHT = 0.6
 VOL_WEIGHT = 0.4
 
@@ -177,7 +181,24 @@ def percentile_rank(vals):
     return out
 
 # =========================
+# 🔥 ROE 필터 통과 여부 (점수에는 미반영, 결과 포함/제외만 결정)
+# =========================
+def passes_roe_filter(ticker):
+    if ROE_MIN_FILTER is None:
+        return True
+
+    fund = fmp_data.get(ticker, {})
+    roe = fund.get("roe", "N/A")
+
+    if roe == "N/A" or roe is None:
+        # 데이터 없는 종목은 필터링하지 않고 통과시킴 (캐시 누락 종목 배제 방지)
+        return True
+
+    return roe >= ROE_MIN_FILTER
+
+# =========================
 # 합성 점수 (RS/모멘텀 + 거래량 가중) 계산 후 정렬
+# ROE는 점수 계산에 포함되지 않음 - 표시/필터 전용
 # =========================
 def attach_composite_scores(items, category):
     # items: list of [ticker, primary(RS or momentum), vol_ratio]
@@ -219,9 +240,18 @@ def scan():
     }
 
     print(f"[SCAN] tickers={len(tickers)} | SPY_RS={SPY_RET:.2f}%")
+    if ROE_MIN_FILTER is not None:
+        print(f"[FILTER] ROE >= {ROE_MIN_FILTER}% 미만 종목 제외 (N/A는 통과)")
+
+    excluded_by_roe = 0
 
     for t in tickers:
         try:
+            # 🔥 ROE 필터 - 신호 계산 전에 먼저 거름 (불필요한 계산 절약)
+            if not passes_roe_filter(t):
+                excluded_by_roe += 1
+                continue
+
             df = yf.download(t, period="1y", auto_adjust=True, progress=False)
 
             if df is None or df.empty:
@@ -242,6 +272,9 @@ def scan():
 
         except:
             continue
+
+    if ROE_MIN_FILTER is not None and excluded_by_roe > 0:
+        print(f"[FILTER] ROE 기준 미달로 {excluded_by_roe}개 종목 제외됨")
 
     # =========================
     # 카테고리별 합성 점수 정렬
@@ -271,11 +304,15 @@ def scan():
             fund = fmp_data.get(t, {})
             rev = fund.get("revenue_growth", "N/A")
             eps = fund.get("eps_growth", "N/A")
+            roe = fund.get("roe", "N/A")  # 🔥 ROE 표시 추가 (점수엔 미반영)
 
             vr_str = f"{vol_ratio:.1f}x" if vol_ratio is not None else "N/A"
             primary_str = f"{primary:.1f}" if primary is not None else "N/A"
 
-            msg += f"{i}. {t} | 점수 {composite:.0f} | {label} {primary_str} | 거래량 {vr_str} | 매출 {rev} | EPS {eps}\n"
+            msg += (
+                f"{i}. {t} | 점수 {composite:.0f} | {label} {primary_str} | 거래량 {vr_str} "
+                f"| 매출 {rev} | EPS {eps} | ROE {roe}\n"
+            )
 
     print(msg)
     send_telegram(msg)
