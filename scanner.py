@@ -32,6 +32,10 @@ VOL_FAVORS_HIGH = {
 RS_WEIGHT = 0.6
 VOL_WEIGHT = 0.4
 
+# 🔥 추세전환은 거래량 동반이 신뢰도의 핵심이라 하드 필터 적용
+# (거래량 평소와 비슷한데 가격만 오른 건 휩소 가능성 높음 -> 후보에서 아예 제외)
+TREND_REVERSAL_MIN_VOL_RATIO = 1.3
+
 # =========================
 # 텔레그램
 # =========================
@@ -266,6 +270,12 @@ def scan():
 
             for s in signals:
                 primary = momentum_20d(df) if s == "추세전환" else rs
+
+                # 🔥 추세전환은 거래량 동반 안 되면 후보에서 제외 (휩소 방지)
+                if s == "추세전환":
+                    if vol_ratio is None or vol_ratio < TREND_REVERSAL_MIN_VOL_RATIO:
+                        continue
+
                 buckets[s].append([t, primary, vol_ratio])
 
             time.sleep(0.05)
@@ -275,6 +285,7 @@ def scan():
 
     if ROE_MIN_FILTER is not None and excluded_by_roe > 0:
         print(f"[FILTER] ROE 기준 미달로 {excluded_by_roe}개 종목 제외됨")
+    print(f"[FILTER] 추세전환은 거래량 비율 >= {TREND_REVERSAL_MIN_VOL_RATIO}x 미만 시 자동 제외됨")
 
     # =========================
     # 카테고리별 합성 점수 정렬
