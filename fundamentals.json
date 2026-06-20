@@ -1,1 +1,22 @@
-{}
+{
+  "AAPL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A"
+  },
+  "NVDA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A"
+  },
+  "TSLA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A"
+  },
+  "AMD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A"
+  },
+  "MU": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A"
+  }
+}
