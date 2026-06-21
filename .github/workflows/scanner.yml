@@ -4,18 +4,26 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # ① 장전 (오후 2시)
+    # ① 장전 (14:00 KST) - 유지
     - cron: '0 5 * * 1-5'
       timezone: 'Asia/Seoul'
-    # ② 장시작 (오후 11:30)
+
+    # ② 장시작 (23:30 KST) - 유지 (고정)
     - cron: '30 14 * * 1-5'
       timezone: 'Asia/Seoul'
-    # ③ 장중 (새벽 2시)
-    - cron: '0 17 * * 1-5'
+
+    # ③ 장중 (01:30 KST) - 2시간 후
+    - cron: '30 16 * * 1-5'
       timezone: 'Asia/Seoul'
-    # ④ 장마감 1시간 전 (새벽 4시) 🔥 수정됨!
-    - cron: '0 19 * * 1-5'
+
+    # ④ 장중 (03:30 KST) - 2시간 후
+    - cron: '30 18 * * 1-5'
       timezone: 'Asia/Seoul'
+
+    # ⑤ 장마감 1시간 전 (05:00 KST) - 유지 (고정)
+    - cron: '0 20 * * 1-5'
+      timezone: 'Asia/Seoul'
+
   workflow_dispatch:
 
 jobs:
@@ -30,22 +38,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cache FMP data
-        uses: actions/cache@v3
-        with:
-          path: fundamentals.json
-          key: fmp-cache-${{ github.run_id }}
-          restore-keys: |
-            fmp-cache-
-
       - name: Install dependencies
         run: |
-          pip install yfinance pandas numpy requests pytz
+          pip install yfinance pandas numpy requests
 
       - name: Run scanner
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
         run: |
           python scanner.py
