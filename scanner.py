@@ -46,13 +46,18 @@ fmp_data = load_fmp()
 # SPY RS
 # =========================
 def get_spy_return():
-    spy = yf.download("SPY", period="1y", auto_adjust=True, progress=False)
+    # multi_level_index=False: 최신 yfinance가 단일 종목도 MultiIndex 컬럼으로
+    # 반환하면서 df["Close"]가 Series가 아니라 DataFrame이 되던 문제 해결
+    spy = yf.download(
+        "SPY", period="1y", auto_adjust=True, progress=False,
+        multi_level_index=False
+    )
 
     if spy is None or spy.empty:
         return 0.0
 
     c = spy["Close"]
-    return (c.iloc[-1] / c.iloc[0] - 1) * 100
+    return float((c.iloc[-1] / c.iloc[0] - 1) * 100)
 
 SPY_RET = get_spy_return()
 
@@ -63,7 +68,7 @@ def calc_rs(df):
     c = df["Close"]
     stock_ret = (c.iloc[-1] / c.iloc[0] - 1) * 100
 
-    return stock_ret - SPY_RET
+    return float(stock_ret) - SPY_RET
 
 # =========================
 # 거래량
@@ -81,7 +86,7 @@ def calc_vol_ratio(df):
         if avg20 == 0:
             return None
 
-        return today / avg20
+        return float(today / avg20)
 
     except:
         return None
@@ -138,7 +143,10 @@ def scan():
 
     for t in tickers:
         try:
-            df = yf.download(t, period="1y", auto_adjust=True, progress=False)
+            df = yf.download(
+                t, period="1y", auto_adjust=True, progress=False,
+                multi_level_index=False
+            )
 
             if df is None or df.empty:
                 continue
