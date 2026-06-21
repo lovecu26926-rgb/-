@@ -43,15 +43,16 @@ def load_fmp():
 fmp_data = load_fmp()
 
 # =========================
-# SPY RS (완전 안정형)
+# SPY RS
 # =========================
 def get_spy_return():
     spy = yf.download("SPY", period="1y", auto_adjust=True, progress=False)
+
     if spy is None or spy.empty:
         return 0.0
 
     c = spy["Close"]
-    return float((c.iloc[-1] / c.iloc[0] - 1) * 100)
+    return (c.iloc[-1] / c.iloc[0] - 1) * 100
 
 SPY_RET = get_spy_return()
 
@@ -60,19 +61,22 @@ def calc_rs(df):
         return None
 
     c = df["Close"]
-    return float((c.iloc[-1] / c.iloc[0] - 1) * 100 - SPY_RET)
+    stock_ret = (c.iloc[-1] / c.iloc[0] - 1) * 100
+
+    return stock_ret - SPY_RET
 
 # =========================
-# 거래량 (FutureWarning 제거 버전)
+# 거래량
 # =========================
 def calc_vol_ratio(df):
     try:
         vol = df["Volume"]
+
         if len(vol) < 21:
             return None
 
-        today = float(vol.iloc[-1])
-        avg20 = float(vol.iloc[-21:-1].mean())
+        today = vol.iloc[-1]
+        avg20 = vol.iloc[-21:-1].mean()
 
         if avg20 == 0:
             return None
