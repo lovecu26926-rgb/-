@@ -1,6 +1,7 @@
 import requests
 import time
 import os
+import sys
 import json
 import pandas as pd
 
@@ -9,6 +10,8 @@ CACHE_FILE = "fundamentals.json"
 
 TREND_CSV = "trend_universe.csv"
 SUPERTREND_CSV = "supertrend_universe.csv"
+
+DEBUG = False  # 응답 원문 디버깅 필요할 때만 True로
 
 
 def load_tickers_from_csv():
@@ -21,20 +24,27 @@ def load_tickers_from_csv():
         return tickers
     except Exception as e:
         print(f"❌ CSV 로드 실패: {e}")
-        # CSV가 없거나 깨졌을 때를 대비한 최소 안전망
-        return ["AAPL", "NVDA", "TSLA", "AMD", "MU"]
+        return []  # 더미 종목으로 대체하지 않음 (안전망 제거)
 
 
 tickers = load_tickers_from_csv()
 
+# 🔥 핵심 수정 1: 종목이 0개면 여기서 바로 종료.
+# 이 가드 없으면 아래 json.dump가 그대로 실행돼서 fundamentals.json이
+# 빈 파일로 덮어써지고, CSV 로드만 잠깐 실패해도 어제까지 쌓인 캐시 전체가 날아감.
+if not tickers:
+    print("⚠️ 종목 리스트가 비어있음 - fundamentals.json을 건드리지 않고 종료합니다 (기존 캐시 유지)")
+    sys.exit(0)
+
 
 def growth(now, prev):
-    if now is None or prev is None or prev == 0:
+    try:
+        if now is None or prev is None or prev == 0:
+            return None
+        return (now - prev) / abs(prev) * 100
+    except Exception:
         return None
-    return (now - prev) / abs(prev) * 100
 
-
-DEBUG = False  # MU "Special Endpoint" 원인 확인 완료. 필요시 다시 True로
 
 def fetch_income(ticker):
     """매출/EPS 성장률 (1콜)"""
@@ -46,22 +56,28 @@ def fetch_income(ticker):
             print(f"  🔍 {ticker} income raw={resp.text[:300]}")
         r = resp.json()
         if not isinstance(r, list) or len(r) < 2:
-            print(f"  ⚠️ {ticker} income 응답 이상함: {r}")
+            print(f"⚠️ {ticker} income 데이터 부족: {r}")
             return None, None
+
+        # 날짜 기준 내림차순 정렬 - API가 항상 최신순으로 준다는 보장이 없어서 안전장치
+        r = sorted(r, key=lambda x: x.get("date", ""), reverse=True)
 
         now = r[0]
         prev = r[1]
 
         rev_now = now.get("revenue")
         rev_prev = prev.get("revenue")
-        eps_now = now.get("eps") or now.get("epsdiluted")
-        eps_prev = prev.get("eps") or prev.get("epsdiluted")
+
+        eps_now = now.get("eps") or now.get("epsdiluted") or now.get("netIncomePerShare")
+        eps_prev = prev.get("eps") or prev.get("epsdiluted") or prev.get("netIncomePerShare")
 
         rev_growth = growth(rev_now, rev_prev)
         eps_growth = growth(eps_now, eps_prev)
+
         return rev_growth, eps_growth
+
     except Exception as e:
-        print(f"  ⚠️ {ticker} income 에러: {e}")
+        print(f"⚠️ {ticker} income 에러: {e}")
         return None, None
 
 
@@ -75,25 +91,30 @@ def fetch_roe(ticker):
             print(f"  🔍 {ticker} roe raw={resp.text[:300]}")
         r = resp.json()
         if not isinstance(r, list) or len(r) < 1:
-            print(f"  ⚠️ {ticker} key-metrics 응답 이상함: {r}")
+            print(f"⚠️ {ticker} key-metrics 부족: {r}")
             return None
 
         roe = r[0].get("returnOnEquity")
         if roe is None:
             return None
 
-        # FMP는 보통 비율(0.15)로 줌 -> % 로 변환
-        return roe * 100 if abs(roe) < 5 else roe
+        # 🔥 핵심 수정 2: FMP는 보통 비율(0.15)로 줌 -> % 로 변환.
+        # abs()를 써야 적자 ROE(음수)도 똑같이 "비율"로 판단됨.
+        # (이전 버전의 roe < 1 조건은 음수면 크기 상관없이 무조건 *100 처리돼서,
+        #  이미 %로 온 큰 음수값까지 잘못 곱해버릴 수 있었음)
+        if abs(roe) < 10:
+            return roe * 100
+        print(f"  ℹ️ {ticker} ROE={roe} (절댓값 10 이상) - 이미 %로 추정돼 변환 생략")
+        return roe
+
     except Exception as e:
-        print(f"  ⚠️ {ticker} roe 에러: {e}")
+        print(f"⚠️ {ticker} roe 에러: {e}")
         return None
 
 
 print("🚀 FMP Growth + ROE Cache Builder Start\n")
 print(f"📊 종목 수: {len(tickers)}개 (예상 콜 수: {len(tickers) * 2}회)\n")
 
-# 🔥 무료 플랜 일일 250콜 한도 안전장치
-# 1티커당 2콜(income+roe)이므로 125종목 초과 시 자동으로 잘라냄
 MAX_DAILY_CALLS = 250
 max_tickers = MAX_DAILY_CALLS // 2
 
@@ -106,21 +127,20 @@ fundamentals = {}
 for i, t in enumerate(tickers, 1):
     rev, eps = fetch_income(t)
     time.sleep(0.3)
+
     roe = fetch_roe(t)
     time.sleep(0.3)
 
-    # scanner.py가 fund.get("revenue_growth", "N/A") 식으로 조회하니까
-    # 키가 없을 때뿐 아니라 값이 없을 때도 "N/A"로 통일해둠
     fundamentals[t] = {
         "revenue_growth": round(rev, 1) if rev is not None else "N/A",
         "eps_growth": round(eps, 1) if eps is not None else "N/A",
         "roe": round(roe, 1) if roe is not None else "N/A",
     }
 
-    rev_s = f"{rev:.1f}%" if rev is not None else "N/A"
-    eps_s = f"{eps:.1f}%" if eps is not None else "N/A"
-    roe_s = f"{roe:.1f}%" if roe is not None else "N/A"
-    print(f"[{i}/{len(tickers)}] {t} | 매출 {rev_s} | EPS {eps_s} | ROE {roe_s}")
+    print(f"[{i}/{len(tickers)}] {t} | "
+          f"매출 {fundamentals[t]['revenue_growth']} | "
+          f"EPS {fundamentals[t]['eps_growth']} | "
+          f"ROE {fundamentals[t]['roe']}")
 
 with open(CACHE_FILE, "w") as f:
     json.dump(fundamentals, f, ensure_ascii=False, indent=2)
