@@ -30,7 +30,7 @@ def send_telegram(msg):
         pass
 
 # =========================
-# 펀더멘탈 캐시 로드 (YoY + FWD)
+# 펀더멘탈 로드 (YoY 통일)
 # =========================
 def load_fmp():
     if not os.path.exists(FMP_CACHE_FILE):
@@ -44,7 +44,7 @@ def load_fmp():
 fmp_data = load_fmp()
 
 # =========================
-# SPY 기준 RS
+# SPY RS
 # =========================
 def get_spy_return():
     spy = yf.download("SPY", period="1y", auto_adjust=True, progress=False)
@@ -62,7 +62,7 @@ def calc_rs(df):
     return float((c.iloc[-1] / c.iloc[0] - 1) * 100 - SPY_RET)
 
 # =========================
-# 거래량 (그대로 표시만)
+# 거래량
 # =========================
 def calc_vol_ratio(df):
     try:
@@ -72,7 +72,7 @@ def calc_vol_ratio(df):
         return None
 
 # =========================
-# 신호
+# 시그널
 # =========================
 def get_signals(df):
     close = df["Close"]
@@ -82,46 +82,24 @@ def get_signals(df):
 
     c = close.iloc[-1]
 
-    signals = []
+    sig = []
 
     if c > high20.iloc[-1]:
-        signals.append("돌파")
+        sig.append("돌파")
 
     if ma20.iloc[-1] > ma50.iloc[-1] and c < ma20.iloc[-1]:
-        signals.append("눌림목")
+        sig.append("눌림목")
 
     if ma20.iloc[-2] <= ma50.iloc[-2] and ma20.iloc[-1] > ma50.iloc[-1]:
-        signals.append("골든크로스")
+        sig.append("골든크로스")
 
     if ma20.iloc[-2] < ma50.iloc[-2] and ma20.iloc[-1] > ma50.iloc[-1]:
-        signals.append("추세전환")
+        sig.append("추세전환")
 
-    return signals
-
-# =========================
-# 성장 상태 판단
-# =========================
-def growth_state(yoy, fwd):
-    try:
-        if yoy is None or fwd is None:
-            return ""
-
-        if yoy < 0 and fwd > 0:
-            return "🟢 (턴어라운드)"
-
-        if fwd > yoy:
-            return "🟢 (가속)"
-
-        if fwd < yoy:
-            return "🔴 (둔화)"
-
-        return ""
-
-    except:
-        return ""
+    return sig
 
 # =========================
-# CSV 로드
+# 티커
 # =========================
 def load_tickers():
     t1 = pd.read_csv(TREND_CSV)["Symbol"].dropna().tolist()
@@ -154,12 +132,12 @@ def scan():
 
             rs = calc_rs(df)
             vol = calc_vol_ratio(df)
-            signals = get_signals(df)
+            sigs = get_signals(df)
 
-            if not signals:
+            if not sigs:
                 continue
 
-            for s in signals:
+            for s in sigs:
                 buckets[s].append((t, rs, vol))
 
             time.sleep(0.05)
@@ -184,20 +162,17 @@ def scan():
 
         for i, (t, rs, vol) in enumerate(items, 1):
 
-            fund = fmp_data.get(t, {})
+            f = fmp_data.get(t, {})
 
-            eps_yoy = fund.get("eps_yoy", None)
-            eps_fwd = fund.get("eps_fwd", None)
-            rev_yoy = fund.get("rev_yoy", None)
-            rev_fwd = fund.get("rev_fwd", None)
-
-            eps_state = growth_state(eps_yoy, eps_fwd)
-            rev_state = growth_state(rev_yoy, rev_fwd)
+            eps_yoy = f.get("eps_yoy", None)
+            rev_yoy = f.get("rev_yoy", None)
+            eps_fwd_yoy = f.get("eps_fwd_yoy", None)
+            rev_fwd_yoy = f.get("rev_fwd_yoy", None)
 
             msg += (
                 f"{i}. {t} | RS {rs:.1f} | VOL {vol:.1f}x\n"
-                f"EPS YoY {eps_yoy} → EPS FWD {eps_fwd} {eps_state}\n"
-                f"REV YoY {rev_yoy} → REV FWD {rev_fwd} {rev_state}\n\n"
+                f"EPS YoY {eps_yoy} | EPS FWD YoY {eps_fwd_yoy}\n"
+                f"REV YoY {rev_yoy} | REV FWD YoY {rev_fwd_yoy}\n\n"
             )
 
     print(msg)
