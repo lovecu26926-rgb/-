@@ -14,7 +14,6 @@ SUPERTREND_CSV = "supertrend_universe.csv"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 카테고리별 거래량 방향
 VOL_FAVORS_HIGH = {
     "돌파": True,
     "눌림목": False,
@@ -22,7 +21,6 @@ VOL_FAVORS_HIGH = {
     "추세전환": True,
 }
 
-# 카테고리별 가중치 (RS/모멘텀 : 거래량)
 CATEGORY_WEIGHTS = {
     "돌파":      {"rs": 0.5, "vol": 0.5},
     "눌림목":    {"rs": 0.7, "vol": 0.3},
@@ -30,7 +28,6 @@ CATEGORY_WEIGHTS = {
     "추세전환":  {"rs": 0.7, "vol": 0.3},
 }
 
-# 추세전환 거래량 하드필터 (1.3배 미만 제외)
 TREND_REVERSAL_MIN_VOL_RATIO = 1.3
 
 # =========================
@@ -47,7 +44,7 @@ def send_telegram(msg):
         pass
 
 # =========================
-# SPY 기준 (1년 수익률)
+# SPY 기준
 # =========================
 def get_spy_return():
     try:
@@ -64,7 +61,7 @@ def get_spy_return():
 SPY_RET = get_spy_return()
 
 # =========================
-# RS 계산 (SPY 대비 초과 수익률)
+# RS 계산
 # =========================
 def calc_rs(df):
     try:
@@ -79,7 +76,7 @@ def calc_rs(df):
         return None
 
 # =========================
-# 거래량 비율 (당일 / 20일 평균)
+# 거래량 비율
 # =========================
 def calc_vol_ratio(df):
     try:
@@ -94,7 +91,7 @@ def calc_vol_ratio(df):
         return None
 
 # =========================
-# 신호 감지 (돌파, 눌림목, 골든크로스, 추세전환)
+# 신호 감지
 # =========================
 def get_signals(df):
     try:
@@ -112,19 +109,15 @@ def get_signals(df):
 
         signals = []
 
-        # 돌파
         if c_last > h20_last:
             signals.append("돌파")
 
-        # 눌림목
         if ma20_last > ma50_last and c_last < ma20_last:
             signals.append("눌림목")
 
-        # 골든크로스
         if ma20_prev <= ma50_prev and ma20_last > ma50_last:
             signals.append("골든크로스")
 
-        # 추세전환
         if ma20_prev < ma50_prev and ma20_last > ma50_last:
             signals.append("추세전환")
 
@@ -142,7 +135,7 @@ def momentum_20d(df):
         return None
 
 # =========================
-# 퍼센타일 랭크 (0~100)
+# 퍼센타일 랭크
 # =========================
 def percentile_rank(vals):
     idx_vals = [(i, v) for i, v in enumerate(vals) if v is not None]
@@ -154,7 +147,7 @@ def percentile_rank(vals):
     return out
 
 # =========================
-# 합성 점수 계산
+# 합성 점수
 # =========================
 def attach_composite_scores(items, category):
     primaries = [it[1] for it in items]
@@ -182,7 +175,7 @@ def attach_composite_scores(items, category):
     return scored
 
 # =========================
-# CSV 클리너 (%, USD, 쉼표 제거)
+# CSV 클리너
 # =========================
 def clean_numeric(val):
     if isinstance(val, str):
@@ -196,10 +189,9 @@ def clean_numeric(val):
     return val
 
 # =========================
-# 🔥 CSV 재무 데이터 로드 (강화 버전)
+# 🔥 CSV 재무 데이터 로드 (탭/콤마 자동 감지)
 # =========================
 def load_fundamentals():
-    # 파일이 없으면 빈 딕셔너리 반환
     if not os.path.exists(TREND_CSV) and not os.path.exists(SUPERTREND_CSV):
         print("[WARN] CSV 파일이 없습니다.")
         return {}
@@ -208,9 +200,17 @@ def load_fundamentals():
     for path in [TREND_CSV, SUPERTREND_CSV]:
         if os.path.exists(path):
             try:
-                df = pd.read_csv(path, encoding='utf-8-sig')
-                # 컬럼명 공백 제거
+                # 🔥 해결: sep=None + engine='python' → 탭/콤마 자동 감지
+                df = pd.read_csv(path, encoding='utf-8-sig', sep=None, engine='python')
                 df.columns = df.columns.str.strip()
+
+                # 🔥 방어 코드: 컬럼이 하나고 탭 포함 → 강제 분할
+                if len(df.columns) == 1 and '\t' in df.columns[0]:
+                    print(f"[INFO] 탭 구분자 감지됨: {path}")
+                    split_cols = df.columns[0].split('\t')
+                    df = df[df.columns[0]].str.split('\t', expand=True)
+                    df.columns = split_cols
+
                 df_list.append(df)
             except Exception as e:
                 print(f"[WARN] {path} 읽기 실패: {e}")
@@ -222,7 +222,6 @@ def load_fundamentals():
 
     df = pd.concat(df_list, ignore_index=True)
 
-    # Symbol 컬럼이 없으면 첫 번째 컬럼을 Symbol로 사용
     if "Symbol" not in df.columns:
         if len(df.columns) > 0:
             first_col = df.columns[0]
@@ -255,10 +254,12 @@ def load_fundamentals():
 def scan():
     fund_map = load_fundamentals()
 
-    trend = pd.read_csv(TREND_CSV, encoding='utf-8-sig')["Symbol"].dropna().tolist()
-    supert = pd.read_csv(SUPERTREND_CSV, encoding='utf-8-sig')["Symbol"].dropna().tolist()
+    if not fund_map:
+        print("[ERROR] 불러온 종목이 없습니다.")
+        return
 
-    tickers = list(set(trend + supert))
+    # 🔥 fund_map의 키를 tickers로 사용 (CSV 재읽기 방지)
+    tickers = list(fund_map.keys())
 
     buckets = {
         "돌파": [],
@@ -330,47 +331,25 @@ def scan():
             roe = f.get("ROE")
             target_price = f.get("Target Price 1Y")
 
-            # EPS Forward 계산
             eps_fwd = None
-            if (
-                pd.notna(reported_eps)
-                and pd.notna(estimated_eps)
-                and reported_eps != 0
-            ):
+            if pd.notna(reported_eps) and pd.notna(estimated_eps) and reported_eps != 0:
                 eps_fwd = ((estimated_eps - reported_eps) / abs(reported_eps)) * 100
 
-            # TP 상승률 계산
             tp = None
-            if (
-                pd.notna(target_price)
-                and current_price > 0
-            ):
+            if pd.notna(target_price) and current_price > 0:
                 tp = ((target_price - current_price) / current_price) * 100
 
-            # 성장 태그
             growth_tag = ""
             if isinstance(eps_yoy, (int, float)) and eps_yoy > 200:
                 growth_tag = "🔥"
-            elif (
-                isinstance(eps_yoy, (int, float))
-                and isinstance(eps_fwd, (int, float))
-                and eps_yoy >= 10
-                and eps_fwd >= 10
-            ):
+            elif isinstance(eps_yoy, (int, float)) and isinstance(eps_fwd, (int, float)) and eps_yoy >= 10 and eps_fwd >= 10:
                 accel = eps_fwd / eps_yoy
-                if accel >= 1.3:
-                    growth_tag = "🚀"
-                elif accel < 0.8:
-                    growth_tag = "⚠️"
-                else:
-                    growth_tag = "➡️"
+                growth_tag = "🚀" if accel >= 1.3 else "⚠️" if accel < 0.8 else "➡️"
 
-            # 매출 검증 태그
             rev_tag = ""
             if isinstance(rev_yoy, (int, float)):
                 rev_tag = "✅" if rev_yoy >= 10 else "⚠️"
 
-            # 문자열 변환
             rs_str = f"{primary:.1f}" if primary is not None else "N/A"
             vol_str = f"{vol_ratio:.1f}x" if vol_ratio is not None else "N/A"
             eps_str = f"{eps_yoy:.1f}%" if pd.notna(eps_yoy) else "N/A"
