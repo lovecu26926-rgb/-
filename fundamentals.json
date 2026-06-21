@@ -1,25 +1,625 @@
 {
-  "AAPL": {
-    "revenue_growth": 6.4,
-    "eps_growth": 22.6,
-    "roe": 151.9
+  "ACAD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
   },
-  "NVDA": {
-    "revenue_growth": 65.5,
-    "eps_growth": 66.0,
-    "roe": 76.3
+  "ADEA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
   },
-  "TSLA": {
-    "revenue_growth": -2.9,
-    "eps_growth": -47.1,
-    "roe": 4.6
+  "ADTN": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "AEIS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "AGNC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "AGX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ALAB": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ALGM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ALGT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "AMAT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "AMBA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
   },
   "AMD": {
     "revenue_growth": 34.3,
     "eps_growth": 164.4,
     "roe": 6.9
   },
+  "AMKR": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "AMZN": {
+    "revenue_growth": 12.4,
+    "eps_growth": 28.8,
+    "roe": 18.9
+  },
+  "ANET": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "APLD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "APPS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ARRY": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ATEC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "BE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "BEAM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "BFAM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "BROS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "BWA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "BZ": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CAR": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CARG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CASY": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CEG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CGNX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "COHU": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CORZ": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CRDO": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CRWD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CSTM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CTRE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "CVNA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DAVE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DELL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DIOD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DOCN": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "DY": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ECG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FCX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FIGS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FIX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FORM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FROG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FTAI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "FVRR": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "GCT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "GFI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "GLXY": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "GMED": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "IE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "IESC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "INSP": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "INTC": {
+    "revenue_growth": -0.5,
+    "eps_growth": 98.7,
+    "roe": -0.2
+  },
+  "IONS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "IOVA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "JBL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "KLAC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "KLIC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "KMI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "KTB": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "LRCX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "M": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MKSI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MP": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MRCY": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
   "MU": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MUSA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MWA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MXL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "MYRG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "NEE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "NTLA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "NU": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "NVMI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "OKTA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ORC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ORI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ORKA": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "OUST": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "PDFS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "PHAT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "PLAB": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "PLNT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "PMT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "PUK": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "QTEX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "RCL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "RLAY": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "ROAD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "RXO": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "RXT": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SCCO": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SEI": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SEZL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SF": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SGHC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SIG": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SIMO": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SITE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SITM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SLS": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SMTC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SNDX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SNEX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SPXC": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SSRM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "STLD": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "STRL": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "STX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SYM": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "SYRE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TE": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TER": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TGTX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TIGO": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TMDX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TNGX": {
+    "revenue_growth": "N/A",
+    "eps_growth": "N/A",
+    "roe": "N/A"
+  },
+  "TTMI": {
     "revenue_growth": "N/A",
     "eps_growth": "N/A",
     "roe": "N/A"
