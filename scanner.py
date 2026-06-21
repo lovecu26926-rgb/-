@@ -22,7 +22,12 @@ def send_telegram(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": msg,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True
+            },
             timeout=10
         )
     except:
@@ -199,7 +204,7 @@ def scan():
             vol_str = f"{vol:.1f}x" if vol is not None else "N/A"
 
             msg += (
-                f"{i}. {t} | RS {rs_str} | VOL {vol_str}\n"
+                f"{i}. [{t}](https://www.tradingview.com/symbols/{t}/) | RS {rs_str} | VOL {vol_str}\n"
                 f"EPS YoY {eps_yoy_str} | EPS FWD YoY {eps_fwd_str}\n"
                 f"REV YoY {rev_yoy_str} | REV FWD YoY {rev_fwd_str}\n\n"
             )
