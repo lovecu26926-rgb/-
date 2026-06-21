@@ -182,7 +182,7 @@ def attach_composite_scores(items, category):
     return scored
 
 # =========================
-# 🔥 CSV 클리너 (%, USD, 쉼표 제거)
+# CSV 클리너 (%, USD, 쉼표 제거)
 # =========================
 def clean_numeric(val):
     if isinstance(val, str):
@@ -196,13 +196,42 @@ def clean_numeric(val):
     return val
 
 # =========================
-# CSV 재무 데이터 로드
+# 🔥 CSV 재무 데이터 로드 (강화 버전)
 # =========================
 def load_fundamentals():
-    df1 = pd.read_csv(TREND_CSV, encoding='utf-8-sig')
-    df2 = pd.read_csv(SUPERTREND_CSV, encoding='utf-8-sig')
+    # 파일이 없으면 빈 딕셔너리 반환
+    if not os.path.exists(TREND_CSV) and not os.path.exists(SUPERTREND_CSV):
+        print("[WARN] CSV 파일이 없습니다.")
+        return {}
 
-    df = pd.concat([df1, df2], ignore_index=True)
+    df_list = []
+    for path in [TREND_CSV, SUPERTREND_CSV]:
+        if os.path.exists(path):
+            try:
+                df = pd.read_csv(path, encoding='utf-8-sig')
+                # 컬럼명 공백 제거
+                df.columns = df.columns.str.strip()
+                df_list.append(df)
+            except Exception as e:
+                print(f"[WARN] {path} 읽기 실패: {e}")
+        else:
+            print(f"[WARN] {path} 없음")
+
+    if not df_list:
+        return {}
+
+    df = pd.concat(df_list, ignore_index=True)
+
+    # Symbol 컬럼이 없으면 첫 번째 컬럼을 Symbol로 사용
+    if "Symbol" not in df.columns:
+        if len(df.columns) > 0:
+            first_col = df.columns[0]
+            print(f"[INFO] 'Symbol' 컬럼 없음 -> '{first_col}'을 Symbol로 사용")
+            df = df.rename(columns={first_col: "Symbol"})
+        else:
+            print("[ERROR] 컬럼이 없는 DataFrame")
+            return {}
+
     df = df.drop_duplicates(subset=["Symbol"])
 
     numeric_cols = [
