@@ -22,7 +22,7 @@ VOL_FAVORS_HIGH = {
     "추세전환": True,
 }
 
-# 카테고리별 가중치
+# 카테고리별 가중치 (RS/모멘텀 : 거래량)
 CATEGORY_WEIGHTS = {
     "돌파":      {"rs": 0.5, "vol": 0.5},
     "눌림목":    {"rs": 0.7, "vol": 0.3},
@@ -30,7 +30,7 @@ CATEGORY_WEIGHTS = {
     "추세전환":  {"rs": 0.7, "vol": 0.3},
 }
 
-# 추세전환 거래량 하드필터
+# 추세전환 거래량 하드필터 (1.3배 미만 제외)
 TREND_REVERSAL_MIN_VOL_RATIO = 1.3
 
 # =========================
@@ -47,7 +47,7 @@ def send_telegram(msg):
         pass
 
 # =========================
-# SPY 기준
+# SPY 기준 (1년 수익률)
 # =========================
 def get_spy_return():
     try:
@@ -94,7 +94,7 @@ def calc_vol_ratio(df):
         return None
 
 # =========================
-# 신호 감지
+# 신호 감지 (돌파, 눌림목, 골든크로스, 추세전환)
 # =========================
 def get_signals(df):
     try:
@@ -112,15 +112,19 @@ def get_signals(df):
 
         signals = []
 
+        # 돌파
         if c_last > h20_last:
             signals.append("돌파")
 
+        # 눌림목
         if ma20_last > ma50_last and c_last < ma20_last:
             signals.append("눌림목")
 
+        # 골든크로스
         if ma20_prev <= ma50_prev and ma20_last > ma50_last:
             signals.append("골든크로스")
 
+        # 추세전환
         if ma20_prev < ma50_prev and ma20_last > ma50_last:
             signals.append("추세전환")
 
@@ -138,7 +142,7 @@ def momentum_20d(df):
         return None
 
 # =========================
-# 퍼센타일 랭크
+# 퍼센타일 랭크 (0~100)
 # =========================
 def percentile_rank(vals):
     idx_vals = [(i, v) for i, v in enumerate(vals) if v is not None]
@@ -178,14 +182,41 @@ def attach_composite_scores(items, category):
     return scored
 
 # =========================
-# 🔥 2단계: CSV 재무 읽기 (FMP 완전 제거)
+# 🔥 CSV 클리너 (%, USD, 쉼표 제거)
+# =========================
+def clean_numeric(val):
+    if isinstance(val, str):
+        val = val.replace('%', '').replace(' USD', '').replace(',', '').strip()
+        if val == '':
+            return float('nan')
+        try:
+            return float(val)
+        except ValueError:
+            return float('nan')
+    return val
+
+# =========================
+# CSV 재무 데이터 로드
 # =========================
 def load_fundamentals():
-    df1 = pd.read_csv(TREND_CSV)
-    df2 = pd.read_csv(SUPERTREND_CSV)
+    df1 = pd.read_csv(TREND_CSV, encoding='utf-8-sig')
+    df2 = pd.read_csv(SUPERTREND_CSV, encoding='utf-8-sig')
 
     df = pd.concat([df1, df2], ignore_index=True)
     df = df.drop_duplicates(subset=["Symbol"])
+
+    numeric_cols = [
+        "EPS Growth TTM YoY",
+        "Revenue Growth TTM YoY",
+        "Reported EPS FY",
+        "Estimated EPS FY",
+        "ROE",
+        "Target Price 1Y"
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(clean_numeric)
 
     return df.set_index("Symbol").to_dict("index")
 
@@ -193,11 +224,10 @@ def load_fundamentals():
 # SCAN
 # =========================
 def scan():
-    # 🔥 2단계: 재무 데이터 로드
     fund_map = load_fundamentals()
 
-    trend = pd.read_csv(TREND_CSV)["Symbol"].dropna().tolist()
-    supert = pd.read_csv(SUPERTREND_CSV)["Symbol"].dropna().tolist()
+    trend = pd.read_csv(TREND_CSV, encoding='utf-8-sig')["Symbol"].dropna().tolist()
+    supert = pd.read_csv(SUPERTREND_CSV, encoding='utf-8-sig')["Symbol"].dropna().tolist()
 
     tickers = list(set(trend + supert))
 
@@ -223,7 +253,6 @@ def scan():
             if not signals:
                 continue
 
-            # 🔥 3단계: 현재가 저장
             current_price = float(df["Close"].iloc[-1])
 
             for s in signals:
@@ -242,13 +271,12 @@ def scan():
 
     print(f"[FILTER] 추세전환 거래량 < {TREND_REVERSAL_MIN_VOL_RATIO}x 제외")
 
-    # 카테고리별 점수 정렬
     scored_buckets = {}
     for cat in ["돌파", "눌림목", "골든크로스", "추세전환"]:
         scored_buckets[cat] = attach_composite_scores(buckets[cat], cat)
 
     # =========================
-    # 🔥 4단계: 출력 (CSV 재무 매칭 + 성장 태그)
+    # 출력
     # =========================
     msg = ""
 
@@ -264,7 +292,6 @@ def scan():
         label = "20D" if cat == "추세전환" else "RS"
 
         for i, (t, primary, vol_ratio, current_price, composite) in enumerate(items, 1):
-            # 🔥 CSV 재무 데이터 읽기
             f = fund_map.get(t, {})
 
             eps_yoy = f.get("EPS Growth TTM YoY")
@@ -291,7 +318,7 @@ def scan():
             ):
                 tp = ((target_price - current_price) / current_price) * 100
 
-            # 성장 태그 (EPS)
+            # 성장 태그
             growth_tag = ""
             if isinstance(eps_yoy, (int, float)) and eps_yoy > 200:
                 growth_tag = "🔥"
