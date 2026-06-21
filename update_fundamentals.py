@@ -24,75 +24,48 @@ def growth(now, prev):
 
 
 # =========================
-# 과거 (YoY)
+# 과거 (YoY) + 현재값 (FWD용)
 # =========================
 def fetch_past(t):
-
     url = f"https://financialmodelingprep.com/stable/income-statement?symbol={t}&limit=2&apikey={API_KEY}"
-
     try:
         r = requests.get(url, timeout=10).json()
         if not isinstance(r, list) or len(r) < 2:
             return None
 
         r = sorted(r, key=lambda x: x.get("date", ""), reverse=True)
-
         now, prev = r[0], r[1]
 
-        return {
-            "eps_yoy": growth(
-                now.get("eps") or now.get("epsdiluted"),
-                prev.get("eps") or prev.get("epsdiluted")
-            ),
-            "rev_yoy": growth(
-                now.get("revenue"),
-                prev.get("revenue")
-            )
-        }
+        eps_now = now.get("eps") or now.get("epsdiluted")
+        eps_prev = prev.get("eps") or prev.get("epsdiluted")
+        rev_now = now.get("revenue")
+        rev_prev = prev.get("revenue")
 
+        return {
+            "eps_yoy": growth(eps_now, eps_prev),
+            "rev_yoy": growth(rev_now, rev_prev),
+            "eps_now": eps_now,   # ← FWD 계산용으로 반환
+            "rev_now": rev_now
+        }
     except:
         return None
 
 
 # =========================
-# 미래 (FWD)
+# 미래 (FWD YoY) - 추가 API 호출 없음
 # =========================
-def fetch_forward_yoy(t):
-
+def fetch_forward_yoy(t, eps_now, rev_now):
     url = f"https://financialmodelingprep.com/stable/analyst-estimates?symbol={t}&limit=1&apikey={API_KEY}"
-
     try:
         r = requests.get(url, timeout=10).json()
         if not isinstance(r, list) or len(r) == 0:
             return None
 
         d = r[0]
-
-        eps_fwd = d.get("estimatedEpsAvg")
-        rev_fwd = d.get("estimatedRevenueAvg")
-
-        # 여기 핵심: "현재 EPS/REV" 필요
-        past = fetch_past(t)
-        if past is None:
-            return None
-
-        # 다시 income 1번 더 (정확한 현재값)
-        url2 = f"https://financialmodelingprep.com/stable/income-statement?symbol={t}&limit=1&apikey={API_KEY}"
-        r2 = requests.get(url2, timeout=10).json()
-
-        if not isinstance(r2, list) or len(r2) == 0:
-            return None
-
-        now = r2[0]
-
-        eps_now = now.get("eps") or now.get("epsdiluted")
-        rev_now = now.get("revenue")
-
         return {
-            "eps_fwd_yoy": growth(eps_fwd, eps_now),
-            "rev_fwd_yoy": growth(rev_fwd, rev_now)
+            "eps_fwd_yoy": growth(d.get("estimatedEpsAvg"), eps_now),
+            "rev_fwd_yoy": growth(d.get("estimatedRevenueAvg"), rev_now)
         }
-
     except:
         return None
 
@@ -101,37 +74,40 @@ def fetch_forward_yoy(t):
 # build
 # =========================
 def build():
-
     tickers = load_tickers()
     data = {}
 
     print(f"[FUND] {len(tickers)} tickers")
 
     for i, t in enumerate(tickers, 1):
-
         past = fetch_past(t)
-        time.sleep(0.2)
-
-        fwd = fetch_forward_yoy(t)
-        time.sleep(0.2)
+        time.sleep(0.25)
 
         if past is None:
-            past = {}
+            data[t] = {
+                "eps_yoy": None,
+                "rev_yoy": None,
+                "eps_fwd_yoy": None,
+                "rev_fwd_yoy": None
+            }
+            print(i, t, "→ past 없음")
+            continue
 
-        if fwd is None:
-            fwd = {}
+        fwd = fetch_forward_yoy(t, past["eps_now"], past["rev_now"])
+        time.sleep(0.25)
 
         data[t] = {
-            "eps_yoy": past.get("eps_yoy"),
-            "rev_yoy": past.get("rev_yoy"),
-            "eps_fwd_yoy": fwd.get("eps_fwd_yoy"),
-            "rev_fwd_yoy": fwd.get("rev_fwd_yoy"),
+            "eps_yoy": past["eps_yoy"],
+            "rev_yoy": past["rev_yoy"],
+            "eps_fwd_yoy": fwd.get("eps_fwd_yoy") if fwd else None,
+            "rev_fwd_yoy": fwd.get("rev_fwd_yoy") if fwd else None
         }
-
         print(i, t, data[t])
 
     with open(CACHE_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+    print(f"[DONE] {CACHE_FILE} 저장 완료")
 
 
 if __name__ == "__main__":
