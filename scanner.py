@@ -1,36 +1,37 @@
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import requests
-import json
 import os
 import time
 
 # =========================
 # 설정
 # =========================
-TREND_CSV = "trend_universe.csv"            # 추세전환 유니버스 (가벼운 필터, ~10개)
-SUPERTREND_CSV = "supertrend_universe.csv"  # 추세추종 유니버스 (빡빡한 필터, ~40개)
+TREND_CSV = "trend_universe.csv"
+SUPERTREND_CSV = "supertrend_universe.csv"
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-FMP_API_KEY = os.getenv("FMP_API_KEY")
-FMP_CACHE_FILE = "fundamentals_cache.json"  # 당일 누적 캐시 (GitHub Actions cache가 날짜별로 관리)
 
-def load_fmp_cache():
-    if not os.path.exists(FMP_CACHE_FILE):
-        return {}
-    try:
-        with open(FMP_CACHE_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+# 카테고리별 거래량 방향
+VOL_FAVORS_HIGH = {
+    "돌파": True,
+    "눌림목": False,
+    "골든크로스": True,
+    "추세전환": True,
+}
 
-def save_fmp_cache(cache):
-    try:
-        with open(FMP_CACHE_FILE, "w") as f:
-            json.dump(cache, f, indent=2)
-    except:
-        pass
+# 카테고리별 가중치
+CATEGORY_WEIGHTS = {
+    "돌파":      {"rs": 0.5, "vol": 0.5},
+    "눌림목":    {"rs": 0.7, "vol": 0.3},
+    "골든크로스": {"rs": 0.6, "vol": 0.4},
+    "추세전환":  {"rs": 0.7, "vol": 0.3},
+}
+
+# 추세전환 거래량 하드필터
+TREND_REVERSAL_MIN_VOL_RATIO = 1.3
 
 # =========================
 # 텔레그램
@@ -39,215 +40,166 @@ def send_telegram(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": msg,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": True
-            },
+            data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
             timeout=10
         )
     except:
         pass
 
 # =========================
-# SPY RS
+# SPY 기준
 # =========================
 def get_spy_return():
-    spy = yf.download(
-        "SPY", period="1y", auto_adjust=True, progress=False,
-        multi_level_index=False
-    )
-    if spy is None or spy.empty:
+    try:
+        spy = yf.download("SPY", period="1y", auto_adjust=True, progress=False)
+        if spy is None or spy.empty:
+            return 0.0
+        close = spy["Close"]
+        first = close.iloc[0].item()
+        last = close.iloc[-1].item()
+        return float((last / first - 1) * 100)
+    except:
         return 0.0
-    c = spy["Close"]
-    return float((c.iloc[-1] / c.iloc[0] - 1) * 100)
 
 SPY_RET = get_spy_return()
 
+# =========================
+# RS 계산 (SPY 대비 초과 수익률)
+# =========================
 def calc_rs(df):
-    if df is None or df.empty:
+    try:
+        if df is None or df.empty:
+            return None
+        close = df["Close"]
+        first = close.iloc[0].item()
+        last = close.iloc[-1].item()
+        stock_ret = (last / first - 1) * 100
+        return float(stock_ret - SPY_RET)
+    except:
         return None
-    c = df["Close"]
-    stock_ret = (c.iloc[-1] / c.iloc[0] - 1) * 100
-    return float(stock_ret) - SPY_RET
 
 # =========================
-# 거래량
+# 거래량 비율 (당일 / 20일 평균)
 # =========================
 def calc_vol_ratio(df):
     try:
         vol = df["Volume"]
-        if len(vol) < 21:
-            return None
-        today = vol.iloc[-1]
+        today = vol.iloc[-1].item()
         avg20 = vol.iloc[-21:-1].mean()
-        if avg20 == 0:
+        avg20 = avg20.item() if hasattr(avg20, "item") else float(avg20)
+        if not avg20:
             return None
         return float(today / avg20)
     except:
         return None
 
 # =========================
-# 시그널 - 추세전환 유니버스용 (골든크로스 / 추세전환)
-# 두 시그널을 명확히 분리: 이전엔 조건이 사실상 동일해서
-# 골든크로스=추세전환 결과가 항상 같이 나오는 버그가 있었음
+# 신호 감지
 # =========================
-def get_reversal_signals(df):
-    close = df["Close"]
-    ma20 = close.rolling(20).mean()
-    ma50 = close.rolling(50).mean()
+def get_signals(df):
+    try:
+        close = df["Close"]
+        ma20 = close.rolling(20).mean()
+        ma50 = close.rolling(50).mean()
+        high20 = df["High"].rolling(20).max().shift(1)
 
-    c = close.iloc[-1]
-    sig = []
+        c_last = close.iloc[-1].item()
+        h20_last = high20.iloc[-1].item()
+        ma20_last = ma20.iloc[-1].item()
+        ma50_last = ma50.iloc[-1].item()
+        ma20_prev = ma20.iloc[-2].item()
+        ma50_prev = ma50.iloc[-2].item()
 
-    # 골든크로스: 구조적 크로스 이벤트 (MA20이 MA50을 오늘 돌파)
-    if ma20.iloc[-2] <= ma50.iloc[-2] and ma20.iloc[-1] > ma50.iloc[-1]:
-        sig.append("골든크로스")
+        signals = []
 
-    # 추세전환: 아직 MA50 아래지만, 가격이 오늘 막 MA20을 돌파 (더 이른 단계 신호)
-    if (
-        close.iloc[-2] <= ma20.iloc[-2]
-        and c > ma20.iloc[-1]
-        and c < ma50.iloc[-1]
-    ):
-        sig.append("추세전환")
+        if c_last > h20_last:
+            signals.append("돌파")
 
-    return sig
+        if ma20_last > ma50_last and c_last < ma20_last:
+            signals.append("눌림목")
 
-# =========================
-# 시그널 - 추세추종 유니버스용 (돌파 / 눌림목)
-# =========================
-def get_trend_signals(df):
-    close = df["Close"]
-    ma20 = close.rolling(20).mean()
-    ma50 = close.rolling(50).mean()
-    high20 = df["High"].rolling(20).max().shift(1)
+        if ma20_prev <= ma50_prev and ma20_last > ma50_last:
+            signals.append("골든크로스")
 
-    c = close.iloc[-1]
-    sig = []
+        if ma20_prev < ma50_prev and ma20_last > ma50_last:
+            signals.append("추세전환")
 
-    if c > high20.iloc[-1]:
-        sig.append("돌파")
-
-    if ma20.iloc[-1] > ma50.iloc[-1] and c < ma20.iloc[-1]:
-        sig.append("눌림목")
-
-    return sig
+        return signals
+    except:
+        return []
 
 # =========================
-# 티커 로드 (유니버스 분리 — 더 이상 합치지 않음)
+# 20일 모멘텀
 # =========================
-def load_trend_tickers():
-    return pd.read_csv(TREND_CSV)["Symbol"].dropna().tolist()
-
-def load_supertrend_tickers():
-    return pd.read_csv(SUPERTREND_CSV)["Symbol"].dropna().tolist()
-
-# =========================
-# FMP 펀더멘털 — 시그널 통과 종목만 호출
-# 1차(TV 스크리너)에서 재무 필터링 이미 끝났으므로
-# 여기선 캐싱/대량호출 없이 통과 종목 표시용으로만 라이브 호출
-# =========================
-def growth(now, prev):
-    if now is None or prev is None or prev == 0:
+def momentum_20d(df):
+    try:
+        return float((df["Close"].iloc[-1].item() / df["Close"].iloc[-20].item() - 1) * 100)
+    except:
         return None
-    return (now - prev) / abs(prev) * 100
 
-def fetch_json(url, retries=1, delay=1.5):
-    """공통 GET + 재시도. 실패하면 retries 횟수만큼만 추가 시도 (기본 총 2회)."""
-    for attempt in range(retries + 1):
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                return r.json()
-        except:
-            pass
-        if attempt < retries:
-            time.sleep(delay)
-    return None
+# =========================
+# 퍼센타일 랭크
+# =========================
+def percentile_rank(vals):
+    idx_vals = [(i, v) for i, v in enumerate(vals) if v is not None]
+    idx_vals.sort(key=lambda x: x[1])
+    n = len(idx_vals)
+    out = {}
+    for rank, (i, v) in enumerate(idx_vals):
+        out[i] = (rank / (n - 1) * 100) if n > 1 else 50.0
+    return out
 
-def fetch_past(t):
-    url = (
-        f"https://financialmodelingprep.com/stable/income-statement"
-        f"?symbol={t}&period=annual&limit=2&apikey={FMP_API_KEY}"
-    )
-    data = fetch_json(url)
-    if not isinstance(data, list) or len(data) < 2:
-        return None
-    data = sorted(data, key=lambda x: x.get("date", ""), reverse=True)
-    now, prev = data[0], data[1]
-    eps_now = now.get("eps") or now.get("epsdiluted")
-    eps_prev = prev.get("eps") or prev.get("epsdiluted")
-    rev_now = now.get("revenue")
-    rev_prev = prev.get("revenue")
-    return {
-        "eps_yoy": growth(eps_now, eps_prev),
-        "rev_yoy": growth(rev_now, rev_prev),
-        "eps_now": eps_now,
-        "rev_now": rev_now
-    }
+# =========================
+# 합성 점수 계산
+# =========================
+def attach_composite_scores(items, category):
+    primaries = [it[1] for it in items]
+    vols = [it[2] for it in items]
 
-def fetch_forward_yoy(t, eps_now, rev_now):
-    url = (
-        f"https://financialmodelingprep.com/stable/analyst-estimates"
-        f"?symbol={t}&period=annual&page=0&limit=1&apikey={FMP_API_KEY}"
-    )
-    data = fetch_json(url)
-    if not isinstance(data, list) or len(data) == 0:
-        return None
-    d = data[0]
-    return {
-        "eps_fwd_yoy": growth(d.get("estimatedEpsAvg"), eps_now),
-        "rev_fwd_yoy": growth(d.get("estimatedRevenueAvg"), rev_now)
-    }
+    p_rank = percentile_rank(primaries)
+    v_rank = percentile_rank(vols)
 
-def fetch_roe(t):
-    url = (
-        f"https://financialmodelingprep.com/stable/ratios-ttm"
-        f"?symbol={t}&apikey={FMP_API_KEY}"
-    )
-    data = fetch_json(url)
-    if not isinstance(data, list) or len(data) == 0:
-        return None
-    roe = data[0].get("returnOnEquityTTM")
-    if roe is None:
-        return None
-    return float(roe) * 100  # FMP는 보통 소수(0.15=15%)로 반환 → % 변환
+    favors_high = VOL_FAVORS_HIGH.get(category, True)
+    weights = CATEGORY_WEIGHTS.get(category, {"rs": 0.6, "vol": 0.4})
+    rs_w = weights["rs"]
+    vol_w = weights["vol"]
 
-def fetch_fundamentals(t):
-    """
-    종목당 2콜만 호출 (income-statement + ratios-ttm).
+    scored = []
+    for i, it in enumerate(items):
+        ticker, primary, vol_ratio, price = it
+        p_pct = p_rank.get(i, 50.0)
+        v_pct = v_rank.get(i, 50.0)
+        if not favors_high:
+            v_pct = 100.0 - v_pct
+        composite = rs_w * p_pct + vol_w * v_pct
+        scored.append((ticker, primary, vol_ratio, price, composite))
 
-    analyst-estimates(FWD)는 FMP 무료/Starter 플랜에서
-    AAPL/TSLA/AMZN 등 87개 대형주 샘플로만 제공됨 — 우리 유니버스의
-    중소형주는 거의 항상 빈 응답이라 호출 자체가 낭비라 제외함.
-    유료 플랜(Premium 이상)으로 올리면 fetch_forward_yoy 다시 붙이면 됨.
-    """
-    result = {
-        "eps_yoy": None, "rev_yoy": None,
-        "eps_fwd_yoy": None, "rev_fwd_yoy": None,
-        "roe": None
-    }
+    scored.sort(key=lambda x: x[4], reverse=True)
+    return scored
 
-    past = fetch_past(t)
-    time.sleep(0.2)
+# =========================
+# 🔥 2단계: CSV 재무 읽기 (FMP 완전 제거)
+# =========================
+def load_fundamentals():
+    df1 = pd.read_csv(TREND_CSV)
+    df2 = pd.read_csv(SUPERTREND_CSV)
 
-    if past:
-        result["eps_yoy"] = past["eps_yoy"]
-        result["rev_yoy"] = past["rev_yoy"]
+    df = pd.concat([df1, df2], ignore_index=True)
+    df = df.drop_duplicates(subset=["Symbol"])
 
-    result["roe"] = fetch_roe(t)
-    time.sleep(0.2)
-
-    return result
+    return df.set_index("Symbol").to_dict("index")
 
 # =========================
 # SCAN
 # =========================
 def scan():
-    trend_tickers = load_trend_tickers()
-    supertrend_tickers = load_supertrend_tickers()
+    # 🔥 2단계: 재무 데이터 로드
+    fund_map = load_fundamentals()
+
+    trend = pd.read_csv(TREND_CSV)["Symbol"].dropna().tolist()
+    supert = pd.read_csv(SUPERTREND_CSV)["Symbol"].dropna().tolist()
+
+    tickers = list(set(trend + supert))
 
     buckets = {
         "돌파": [],
@@ -256,128 +208,129 @@ def scan():
         "추세전환": []
     }
 
-    print(
-        f"[SCAN] 추세전환 유니버스 {len(trend_tickers)}개 | "
-        f"추세추종 유니버스 {len(supertrend_tickers)}개 | SPY={SPY_RET:.2f}"
-    )
+    print(f"[SCAN] tickers={len(tickers)} | SPY_RS={SPY_RET:.2f}%")
 
-    # 추세전환 유니버스 → 골든크로스 / 추세전환만 체크
-    for t in trend_tickers:
+    for t in tickers:
         try:
-            df = yf.download(
-                t, period="1y", auto_adjust=True, progress=False,
-                multi_level_index=False
-            )
+            df = yf.download(t, period="1y", auto_adjust=True, progress=False)
             if df is None or df.empty:
                 continue
 
-            sigs = get_reversal_signals(df)
-            if not sigs:
+            rs = calc_rs(df)
+            vol_ratio = calc_vol_ratio(df)
+            signals = get_signals(df)
+
+            if not signals:
                 continue
 
-            rs = calc_rs(df)
-            vol = calc_vol_ratio(df)
-            for s in sigs:
-                buckets[s].append((t, rs, vol))
+            # 🔥 3단계: 현재가 저장
+            current_price = float(df["Close"].iloc[-1])
 
-            time.sleep(0.05)
-        except:
+            for s in signals:
+                primary = momentum_20d(df) if s == "추세전환" else rs
+
+                if s == "추세전환":
+                    if vol_ratio is None or vol_ratio < TREND_REVERSAL_MIN_VOL_RATIO:
+                        continue
+
+                buckets[s].append((t, primary, vol_ratio, current_price))
+
+            time.sleep(0.2)
+
+        except Exception as e:
             continue
 
-    # 추세추종 유니버스 → 돌파 / 눌림목만 체크
-    for t in supertrend_tickers:
-        try:
-            df = yf.download(
-                t, period="1y", auto_adjust=True, progress=False,
-                multi_level_index=False
-            )
-            if df is None or df.empty:
-                continue
+    print(f"[FILTER] 추세전환 거래량 < {TREND_REVERSAL_MIN_VOL_RATIO}x 제외")
 
-            sigs = get_trend_signals(df)
-            if not sigs:
-                continue
-
-            rs = calc_rs(df)
-            vol = calc_vol_ratio(df)
-            for s in sigs:
-                buckets[s].append((t, rs, vol))
-
-            time.sleep(0.05)
-        except:
-            continue
+    # 카테고리별 점수 정렬
+    scored_buckets = {}
+    for cat in ["돌파", "눌림목", "골든크로스", "추세전환"]:
+        scored_buckets[cat] = attach_composite_scores(buckets[cat], cat)
 
     # =========================
-    # 카테고리별 상위 N개로 압축 (RS 기준) — 출력 개수 + FMP 호출량 동시 통제
-    # 4개 카테고리 x 5개 = 최대 20개, 목표는 평소 10개 안팎
-    # =========================
-    MAX_PER_CATEGORY = 5
-
-    for cat in buckets:
-        buckets[cat].sort(
-            key=lambda x: (x[1] if x[1] is not None else float("-inf")),
-            reverse=True
-        )
-        buckets[cat] = buckets[cat][:MAX_PER_CATEGORY]
-
-    # =========================
-    # 시그널 통과 종목만 FMP 호출 (종목당 1회만, 중복 제거)
-    # =========================
-    signaled_tickers = set()
-    for items in buckets.values():
-        for t, _, _ in items:
-            signaled_tickers.add(t)
-
-    print(f"[FMP] 시그널 통과 {len(signaled_tickers)}개 종목")
-
-    fmp_cache = load_fmp_cache()
-    new_calls = 0
-
-    for t in signaled_tickers:
-        if t in fmp_cache:
-            continue  # 오늘 이미 호출한 종목 → 재사용, 콜 안 씀
-        fmp_cache[t] = fetch_fundamentals(t)
-        new_calls += 1
-
-    print(f"[FMP] 신규 호출 {new_calls}개 | 캐시 재사용 {len(signaled_tickers) - new_calls}개")
-
-    save_fmp_cache(fmp_cache)
-
-    # =========================
-    # OUTPUT
+    # 🔥 4단계: 출력 (CSV 재무 매칭 + 성장 태그)
     # =========================
     msg = ""
 
     for cat in ["돌파", "눌림목", "골든크로스", "추세전환"]:
-        msg += f"\n[{cat}]\n\n"
-        items = buckets[cat]
+        msg += f"\n🏆 [{cat}]\n\n"
+
+        items = scored_buckets[cat]
 
         if not items:
             msg += "없음\n"
             continue
 
-        for i, (t, rs, vol) in enumerate(items, 1):
-            f = fmp_cache.get(t, {})
+        label = "20D" if cat == "추세전환" else "RS"
 
-            eps_yoy = f.get("eps_yoy")
-            rev_yoy = f.get("rev_yoy")
-            eps_fwd_yoy = f.get("eps_fwd_yoy")
-            rev_fwd_yoy = f.get("rev_fwd_yoy")
-            roe = f.get("roe")
+        for i, (t, primary, vol_ratio, current_price, composite) in enumerate(items, 1):
+            # 🔥 CSV 재무 데이터 읽기
+            f = fund_map.get(t, {})
 
-            eps_yoy_str = f"{eps_yoy:.1f}%" if isinstance(eps_yoy, (int, float)) else "N/A"
-            rev_yoy_str = f"{rev_yoy:.1f}%" if isinstance(rev_yoy, (int, float)) else "N/A"
-            eps_fwd_str = f"{eps_fwd_yoy:.1f}%" if isinstance(eps_fwd_yoy, (int, float)) else "N/A"
-            rev_fwd_str = f"{rev_fwd_yoy:.1f}%" if isinstance(rev_fwd_yoy, (int, float)) else "N/A"
-            roe_str = f"{roe:.1f}%" if isinstance(roe, (int, float)) else "N/A"
+            eps_yoy = f.get("EPS Growth TTM YoY")
+            rev_yoy = f.get("Revenue Growth TTM YoY")
+            reported_eps = f.get("Reported EPS FY")
+            estimated_eps = f.get("Estimated EPS FY")
+            roe = f.get("ROE")
+            target_price = f.get("Target Price 1Y")
 
-            rs_str = f"{rs:.1f}" if rs is not None else "N/A"
-            vol_str = f"{vol:.1f}x" if vol is not None else "N/A"
+            # EPS Forward 계산
+            eps_fwd = None
+            if (
+                pd.notna(reported_eps)
+                and pd.notna(estimated_eps)
+                and reported_eps != 0
+            ):
+                eps_fwd = ((estimated_eps - reported_eps) / abs(reported_eps)) * 100
+
+            # TP 상승률 계산
+            tp = None
+            if (
+                pd.notna(target_price)
+                and current_price > 0
+            ):
+                tp = ((target_price - current_price) / current_price) * 100
+
+            # 성장 태그 (EPS)
+            growth_tag = ""
+            if isinstance(eps_yoy, (int, float)) and eps_yoy > 200:
+                growth_tag = "🔥"
+            elif (
+                isinstance(eps_yoy, (int, float))
+                and isinstance(eps_fwd, (int, float))
+                and eps_yoy >= 10
+                and eps_fwd >= 10
+            ):
+                accel = eps_fwd / eps_yoy
+                if accel >= 1.3:
+                    growth_tag = "🚀"
+                elif accel < 0.8:
+                    growth_tag = "⚠️"
+                else:
+                    growth_tag = "➡️"
+
+            # 매출 검증 태그
+            rev_tag = ""
+            if isinstance(rev_yoy, (int, float)):
+                rev_tag = "✅" if rev_yoy >= 10 else "⚠️"
+
+            # 문자열 변환
+            rs_str = f"{primary:.1f}" if primary is not None else "N/A"
+            vol_str = f"{vol_ratio:.1f}x" if vol_ratio is not None else "N/A"
+            eps_str = f"{eps_yoy:.1f}%" if pd.notna(eps_yoy) else "N/A"
+            rev_str = f"{rev_yoy:.1f}%" if pd.notna(rev_yoy) else "N/A"
+            roe_str = f"{roe:.1f}%" if pd.notna(roe) else "N/A"
+            eps_fwd_str = f"{eps_fwd:.1f}%" if eps_fwd is not None else "N/A"
+            tp_str = f"{tp:.1f}%" if tp is not None else "N/A"
 
             msg += (
-                f"{i}. [{t}](https://www.tradingview.com/symbols/{t}/) | RS {rs_str} | VOL {vol_str}\n"
-                f"EPS YoY {eps_yoy_str} | EPS FWD YoY {eps_fwd_str}\n"
-                f"REV YoY {rev_yoy_str} | REV FWD YoY {rev_fwd_str} | ROE {roe_str}\n\n"
+                f"{i}. [{t}](https://www.tradingview.com/symbols/{t}/)\n"
+                f"RS {rs_str} | VOL {vol_str}\n\n"
+                f"EPS {eps_str}\n"
+                f"FWD {eps_fwd_str} {growth_tag}\n\n"
+                f"REV {rev_str} {rev_tag}\n"
+                f"ROE {roe_str}\n"
+                f"TP {tp_str}\n\n"
             )
 
     print(msg)
