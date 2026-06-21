@@ -1,22 +1,27 @@
 {
   "AAPL": {
-    "revenue_growth": "N/A",
-    "eps_growth": "N/A"
+    "revenue_growth": 6.4,
+    "eps_growth": 22.6,
+    "roe": 151.9
   },
   "NVDA": {
-    "revenue_growth": "N/A",
-    "eps_growth": "N/A"
+    "revenue_growth": 65.5,
+    "eps_growth": 66.0,
+    "roe": 76.3
   },
   "TSLA": {
-    "revenue_growth": "N/A",
-    "eps_growth": "N/A"
+    "revenue_growth": -2.9,
+    "eps_growth": -47.1,
+    "roe": 4.6
   },
   "AMD": {
-    "revenue_growth": "N/A",
-    "eps_growth": "N/A"
+    "revenue_growth": 34.3,
+    "eps_growth": 164.4,
+    "roe": 6.9
   },
   "MU": {
     "revenue_growth": "N/A",
-    "eps_growth": "N/A"
+    "eps_growth": "N/A",
+    "roe": "N/A"
   }
 }
