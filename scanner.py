@@ -109,15 +109,16 @@ def calc_vol_ratio(df):
         return None
 
 # =========================
-# 52주 고가 위치 (%)
+# 52주 고가 대비 이격율 (%)
 # =========================
-def calc_52w_position(df):
+def calc_52w_position(ticker, current_price):
     try:
-        high52 = df["High"].rolling(252).max().iloc[-1].item()
-        current = df["Close"].iloc[-1].item()
-        if high52 <= 0:
+        t = yf.Ticker(ticker)
+        info = t.info
+        high52 = info.get('fiftyTwoWeekHigh')
+        if high52 is None or high52 <= 0:
             return None
-        return float((current / high52) * 100)
+        return float((current_price - high52) / high52 * 100)
     except:
         return None
 
@@ -169,8 +170,11 @@ def get_signals(df, vol_ratio):
         if ma20_prev <= ma50_prev and ma20_last > ma50_last:
             signals.append("골든크로스")
 
-        # ✅ 추세전환: 이미 MA20 > MA50 유지 + 현재가 MA20 위 (크로스 당일 제외)
-        if ma20_prev > ma50_prev and ma20_last > ma50_last and c_last > ma20_last:
+        # ✅ 추세전환: 돌파 신호 있는 종목은 제외 (성격이 다름)
+        #    - 잘 가는 놈(돌파) vs 이제 막 회복하는 놈(추세전환)
+        breakout_hit = any(s.startswith("돌파") for s in signals)
+        if (not breakout_hit and
+                ma20_prev > ma50_prev and ma20_last > ma50_last and c_last > ma20_last):
             signals.append("추세전환")
 
         return signals
@@ -336,13 +340,13 @@ def scan():
 
             rs        = calc_rs(df)
             vol_ratio = calc_vol_ratio(df) or 1.0
-            pos_52w   = calc_52w_position(df)
+            current_price = float(df["Close"].iloc[-1])
+
+            pos_52w   = calc_52w_position(t, current_price)
             signals   = get_signals(df, vol_ratio)
 
             if not signals:
                 continue
-
-            current_price = float(df["Close"].iloc[-1])
 
             for s in signals:
                 # RS 필터
@@ -422,10 +426,9 @@ def scan():
             if isinstance(rev_yoy, float) and not pd.isna(rev_yoy):
                 rev_tag = "✅" if rev_yoy >= 10 else "⚠️"
 
-            # 포맷
             rs_str  = f"{primary:.1f}" if primary is not None else "N/A"
             vol_str = f"{vol_ratio:.1f}x"
-            pos_str = f"{pos_52w:.0f}%" if pos_52w is not None else "N/A"
+            pos_str = f"{pos_52w:+.1f}%" if pos_52w is not None else "N/A"
             eps_str = f"{eps_yoy:.1f}%" if isinstance(eps_yoy, float) and not pd.isna(eps_yoy) else "N/A"
             fwd_str = f"{eps_fwd:.1f}%" if eps_fwd is not None else "N/A"
             qoq_str = f"{qoq:+.1f}%" if qoq is not None else "N/A"
