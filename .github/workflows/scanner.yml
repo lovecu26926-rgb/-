@@ -4,25 +4,20 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # ① 장전 (14:00 KST) - 유지
+    # ① 장전 (14:00 KST = 05:00 UTC)
     - cron: '0 5 * * 1-5'
-      timezone: 'Asia/Seoul'
 
-    # ② 장시작 (23:30 KST) - 유지 (고정)
+    # ② 장시작 (23:30 KST = 14:30 UTC)
     - cron: '30 14 * * 1-5'
-      timezone: 'Asia/Seoul'
 
-    # ③ 장중 (01:30 KST) - 2시간 후
+    # ③ 장중 (01:30 KST = 16:30 UTC)
     - cron: '30 16 * * 1-5'
-      timezone: 'Asia/Seoul'
 
-    # ④ 장중 (03:30 KST) - 2시간 후
+    # ④ 장중 (03:30 KST = 18:30 UTC)
     - cron: '30 18 * * 1-5'
-      timezone: 'Asia/Seoul'
 
-    # ⑤ 장마감 1시간 전 (05:00 KST) - 유지 (고정)
+    # ⑤ 장마감 1시간 전 (05:00 KST = 20:00 UTC)
     - cron: '0 20 * * 1-5'
-      timezone: 'Asia/Seoul'
 
   workflow_dispatch:
 
