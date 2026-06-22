@@ -1,4 +1,4 @@
-import pandas as pd
+8import pandas as pd
 import numpy as np
 import yfinance as yf
 import requests
@@ -8,8 +8,8 @@ import time
 # =========================
 # 설정
 # =========================
-TREND_CSV = "trend_universe.csv"
-SUPERTREND_CSV = "supertrend_universe.csv"
+SuperTREND_CSV = "supertrens.csv"
+reversal_CSV = "revesal.csv"
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
