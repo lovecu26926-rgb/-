@@ -55,6 +55,12 @@ CATEGORY_WEIGHTS = {
 CATEGORIES = ["돌파_52W", "돌파_50", "돌파_20", "눌림목", "골든크로스", "추세전환"]
 
 # =========================
+# 출처별 허용 카테고리
+# =========================
+SUPERTREND_CATS = {"돌파_52W", "돌파_50", "돌파_20", "눌림목", "골든크로스"}
+TREND_CATS = {"추세전환"}
+
+# =========================
 # 텔레그램
 # =========================
 def send_telegram(msg):
@@ -171,7 +177,6 @@ def get_signals(df, vol_ratio):
             signals.append("골든크로스")
 
         # ✅ 추세전환: 돌파 신호 있는 종목은 제외 (성격이 다름)
-        #    - 잘 가는 놈(돌파) vs 이제 막 회복하는 놈(추세전환)
         breakout_hit = any(s.startswith("돌파") for s in signals)
         if (not breakout_hit and
                 ma20_prev > ma50_prev and ma20_last > ma50_last and c_last > ma20_last):
@@ -250,37 +255,42 @@ def clean_numeric(val):
     return val
 
 # =========================
-# CSV 재무 데이터 로드
+# CSV 재무 데이터 로드 (출처 정보 포함)
 # =========================
 def load_fundamentals():
-    if not os.path.exists(TREND_CSV) and not os.path.exists(SUPERTREND_CSV):
-        print("[WARN] CSV 파일 없음")
-        return {}
-
-    df_list = []
-    for path in [TREND_CSV, SUPERTREND_CSV]:
+    dfs = []
+    # 각 CSV를 읽고 source 컬럼 추가
+    for path, source in [(TREND_CSV, "trend"), (SUPERTREND_CSV, "supertrend")]:
         if os.path.exists(path):
             try:
                 df = pd.read_csv(path, encoding='utf-8-sig', sep=None, engine='python')
                 df.columns = df.columns.str.strip()
+                # 탭 구분 처리
                 if len(df.columns) == 1 and '\t' in df.columns[0]:
                     split_cols = df.columns[0].split('\t')
                     df = df[df.columns[0]].str.split('\t', expand=True)
                     df.columns = split_cols
-                df_list.append(df)
+                df['source'] = source
+                dfs.append(df)
             except Exception as e:
                 print(f"[WARN] {path} 읽기 실패: {e}")
 
-    if not df_list:
-        return {}
+    if not dfs:
+        return {}, {}
 
-    df = pd.concat(df_list, ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
 
+    # Symbol 컬럼 확보
     if "Symbol" not in df.columns:
         df = df.rename(columns={df.columns[0]: "Symbol"})
 
-    df = df.drop_duplicates(subset=["Symbol"])
+    # 중복 제거: supertrend 우선
+    priority = {"supertrend": 0, "trend": 1}
+    df['priority'] = df['source'].map(priority)
+    df = df.sort_values('priority').drop_duplicates(subset=["Symbol"], keep='first')
+    df = df.drop(columns=['priority'])
 
+    # 숫자형 컬럼 정리
     numeric_cols = [
         "EPS_Growth_TTM_YoY", "EPS Growth TTM YoY",
         "Revenue_Growth_TTM_YoY", "Revenue Growth TTM YoY",
@@ -294,7 +304,9 @@ def load_fundamentals():
         if col in df.columns:
             df[col] = df[col].apply(clean_numeric)
 
-    return df.set_index("Symbol").to_dict("index")
+    fund_map = df.set_index("Symbol").to_dict("index")
+    source_map = df.set_index("Symbol")["source"].to_dict()
+    return fund_map, source_map
 
 # =========================
 # 재무 헬퍼
@@ -322,7 +334,7 @@ def calc_qoq(cur_q, next_q):
 # SCAN
 # =========================
 def scan():
-    fund_map = load_fundamentals()
+    fund_map, source_map = load_fundamentals()
     if not fund_map:
         print("[ERROR] 종목 없음")
         return
@@ -333,6 +345,11 @@ def scan():
     print(f"[SCAN] tickers={len(tickers)} | SPY={SPY_RET:.2f}%")
 
     for t in tickers:
+        # 출처 가져오기 (기본값: trend)
+        source = source_map.get(t, "trend")
+        # 허용 카테고리 결정
+        allowed_cats = SUPERTREND_CATS if source == "supertrend" else TREND_CATS
+
         try:
             df = yf.download(t, period="1y", auto_adjust=True, progress=False)
             if df is None or df.empty:
@@ -349,11 +366,15 @@ def scan():
                 continue
 
             for s in signals:
-                # RS 필터
+                # 1) 출처 필터
+                if s not in allowed_cats:
+                    continue
+
+                # 2) RS 필터
                 if not rs_pass(s, rs):
                     continue
 
-                # 추세전환 거래량 필터
+                # 3) 추세전환 거래량 필터
                 if s == "추세전환" and vol_ratio < TREND_REVERSAL_MIN_VOL:
                     continue
 
