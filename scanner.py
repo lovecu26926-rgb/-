@@ -14,21 +14,45 @@ SUPERTREND_CSV = "supertrend_universe.csv"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+MAX_PER_CATEGORY = 5
+
+# 돌파 거래량 기준
+VOL_BREAK_20  = 1.2
+VOL_BREAK_50  = 1.3
+VOL_BREAK_52W = 1.5
+
+# 추세전환 최소 거래량
+TREND_REVERSAL_MIN_VOL = 1.3
+
+# RS 기준 (카테고리별)
+RS_MIN = {
+    "돌파_52W": 0,
+    "돌파_50":  0,
+    "돌파_20":  0,
+    "눌림목":   0,
+    "골든크로스": -20,
+    "추세전환": None,   # 제한 없음
+}
+
 VOL_FAVORS_HIGH = {
-    "돌파": True,
-    "눌림목": False,
+    "돌파_52W": True,
+    "돌파_50":  True,
+    "돌파_20":  True,
+    "눌림목":   False,
     "골든크로스": True,
     "추세전환": True,
 }
 
 CATEGORY_WEIGHTS = {
-    "돌파":      {"rs": 0.5, "vol": 0.5},
-    "눌림목":    {"rs": 0.7, "vol": 0.3},
+    "돌파_52W": {"rs": 0.5, "vol": 0.5},
+    "돌파_50":  {"rs": 0.5, "vol": 0.5},
+    "돌파_20":  {"rs": 0.5, "vol": 0.5},
+    "눌림목":   {"rs": 0.7, "vol": 0.3},
     "골든크로스": {"rs": 0.6, "vol": 0.4},
-    "추세전환":  {"rs": 0.7, "vol": 0.3},
+    "추세전환": {"rs": 0.7, "vol": 0.3},
 }
 
-TREND_REVERSAL_MIN_VOL_RATIO = 1.3
+CATEGORIES = ["돌파_52W", "돌파_50", "돌파_20", "눌림목", "골든크로스", "추세전환"]
 
 # =========================
 # 텔레그램
@@ -52,9 +76,7 @@ def get_spy_return():
         if spy is None or spy.empty:
             return 0.0
         close = spy["Close"]
-        first = close.iloc[0].item()
-        last = close.iloc[-1].item()
-        return float((last / first - 1) * 100)
+        return float((close.iloc[-1].item() / close.iloc[0].item() - 1) * 100)
     except:
         return 0.0
 
@@ -65,12 +87,8 @@ SPY_RET = get_spy_return()
 # =========================
 def calc_rs(df):
     try:
-        if df is None or df.empty:
-            return None
         close = df["Close"]
-        first = close.iloc[0].item()
-        last = close.iloc[-1].item()
-        stock_ret = (last / first - 1) * 100
+        stock_ret = (close.iloc[-1].item() / close.iloc[0].item() - 1) * 100
         return float(stock_ret - SPY_RET)
     except:
         return None
@@ -91,39 +109,17 @@ def calc_vol_ratio(df):
         return None
 
 # =========================
-# 신호 감지
+# 52주 고가 위치 (%)
 # =========================
-def get_signals(df):
+def calc_52w_position(df):
     try:
-        close = df["Close"]
-        ma20 = close.rolling(20).mean()
-        ma50 = close.rolling(50).mean()
-        high20 = df["High"].rolling(20).max().shift(1)
-
-        c_last = close.iloc[-1].item()
-        h20_last = high20.iloc[-1].item()
-        ma20_last = ma20.iloc[-1].item()
-        ma50_last = ma50.iloc[-1].item()
-        ma20_prev = ma20.iloc[-2].item()
-        ma50_prev = ma50.iloc[-2].item()
-
-        signals = []
-
-        if c_last > h20_last:
-            signals.append("돌파")
-
-        if ma20_last > ma50_last and c_last < ma20_last:
-            signals.append("눌림목")
-
-        if ma20_prev <= ma50_prev and ma20_last > ma50_last:
-            signals.append("골든크로스")
-
-        if ma20_prev < ma50_prev and ma20_last > ma50_last:
-            signals.append("추세전환")
-
-        return signals
+        high52 = df["High"].rolling(252).max().iloc[-1].item()
+        current = df["Close"].iloc[-1].item()
+        if high52 <= 0:
+            return None
+        return float((current / high52) * 100)
     except:
-        return []
+        return None
 
 # =========================
 # 20일 모멘텀
@@ -133,6 +129,64 @@ def momentum_20d(df):
         return float((df["Close"].iloc[-1].item() / df["Close"].iloc[-20].item() - 1) * 100)
     except:
         return None
+
+# =========================
+# 신호 감지
+# =========================
+def get_signals(df, vol_ratio):
+    try:
+        close  = df["Close"]
+        high   = df["High"]
+        ma20   = close.rolling(20).mean()
+        ma50   = close.rolling(50).mean()
+
+        c_last    = close.iloc[-1].item()
+        ma20_last = ma20.iloc[-1].item()
+        ma50_last = ma50.iloc[-1].item()
+        ma20_prev = ma20.iloc[-2].item()
+        ma50_prev = ma50.iloc[-2].item()
+
+        # 돌파 고가 기준 (당일 제외 shift)
+        high52_prev = high.rolling(252).max().shift(1).iloc[-1].item()
+        high50_prev = high.rolling(50).max().shift(1).iloc[-1].item()
+        high20_prev = high.rolling(20).max().shift(1).iloc[-1].item()
+
+        signals = []
+
+        # ✅ 돌파: 강한 것 하나만 (52W > 50 > 20 우선순위)
+        if c_last > high52_prev and vol_ratio >= VOL_BREAK_52W:
+            signals.append("돌파_52W")
+        elif c_last > high50_prev and vol_ratio >= VOL_BREAK_50:
+            signals.append("돌파_50")
+        elif c_last > high20_prev and vol_ratio >= VOL_BREAK_20:
+            signals.append("돌파_20")
+
+        # ✅ 눌림목: MA20 > MA50 + 현재가 MA20 아래
+        if ma20_last > ma50_last and c_last < ma20_last:
+            signals.append("눌림목")
+
+        # ✅ 골든크로스: 크로스 당일만
+        if ma20_prev <= ma50_prev and ma20_last > ma50_last:
+            signals.append("골든크로스")
+
+        # ✅ 추세전환: 이미 MA20 > MA50 유지 + 현재가 MA20 위 (크로스 당일 제외)
+        if ma20_prev > ma50_prev and ma20_last > ma50_last and c_last > ma20_last:
+            signals.append("추세전환")
+
+        return signals
+    except:
+        return []
+
+# =========================
+# RS 필터 통과 여부
+# =========================
+def rs_pass(cat, rs):
+    min_rs = RS_MIN.get(cat)
+    if min_rs is None:
+        return True   # 추세전환: 제한 없음
+    if rs is None:
+        return False
+    return rs >= min_rs
 
 # =========================
 # 퍼센타일 랭크
@@ -150,28 +204,31 @@ def percentile_rank(vals):
 # 합성 점수
 # =========================
 def attach_composite_scores(items, category):
+    if not items:
+        return []
+
     primaries = [it[1] for it in items]
-    vols = [it[2] for it in items]
+    vols      = [it[2] for it in items]
 
     p_rank = percentile_rank(primaries)
     v_rank = percentile_rank(vols)
 
     favors_high = VOL_FAVORS_HIGH.get(category, True)
-    weights = CATEGORY_WEIGHTS.get(category, {"rs": 0.6, "vol": 0.4})
-    rs_w = weights["rs"]
+    weights     = CATEGORY_WEIGHTS.get(category, {"rs": 0.6, "vol": 0.4})
+    rs_w  = weights["rs"]
     vol_w = weights["vol"]
 
     scored = []
     for i, it in enumerate(items):
-        ticker, primary, vol_ratio, price = it
+        ticker, primary, vol_ratio, price, pos_52w = it
         p_pct = p_rank.get(i, 50.0)
         v_pct = v_rank.get(i, 50.0)
         if not favors_high:
             v_pct = 100.0 - v_pct
         composite = rs_w * p_pct + vol_w * v_pct
-        scored.append((ticker, primary, vol_ratio, price, composite))
+        scored.append((ticker, primary, vol_ratio, price, pos_52w, composite))
 
-    scored.sort(key=lambda x: x[4], reverse=True)
+    scored.sort(key=lambda x: x[5], reverse=True)
     return scored
 
 # =========================
@@ -189,33 +246,26 @@ def clean_numeric(val):
     return val
 
 # =========================
-# 🔥 CSV 재무 데이터 로드 (탭/콤마 자동 감지)
+# CSV 재무 데이터 로드
 # =========================
 def load_fundamentals():
     if not os.path.exists(TREND_CSV) and not os.path.exists(SUPERTREND_CSV):
-        print("[WARN] CSV 파일이 없습니다.")
+        print("[WARN] CSV 파일 없음")
         return {}
 
     df_list = []
     for path in [TREND_CSV, SUPERTREND_CSV]:
         if os.path.exists(path):
             try:
-                # 🔥 해결: sep=None + engine='python' → 탭/콤마 자동 감지
                 df = pd.read_csv(path, encoding='utf-8-sig', sep=None, engine='python')
                 df.columns = df.columns.str.strip()
-
-                # 🔥 방어 코드: 컬럼이 하나고 탭 포함 → 강제 분할
                 if len(df.columns) == 1 and '\t' in df.columns[0]:
-                    print(f"[INFO] 탭 구분자 감지됨: {path}")
                     split_cols = df.columns[0].split('\t')
                     df = df[df.columns[0]].str.split('\t', expand=True)
                     df.columns = split_cols
-
                 df_list.append(df)
             except Exception as e:
                 print(f"[WARN] {path} 읽기 실패: {e}")
-        else:
-            print(f"[WARN] {path} 없음")
 
     if not df_list:
         return {}
@@ -223,25 +273,19 @@ def load_fundamentals():
     df = pd.concat(df_list, ignore_index=True)
 
     if "Symbol" not in df.columns:
-        if len(df.columns) > 0:
-            first_col = df.columns[0]
-            print(f"[INFO] 'Symbol' 컬럼 없음 -> '{first_col}'을 Symbol로 사용")
-            df = df.rename(columns={first_col: "Symbol"})
-        else:
-            print("[ERROR] 컬럼이 없는 DataFrame")
-            return {}
+        df = df.rename(columns={df.columns[0]: "Symbol"})
 
     df = df.drop_duplicates(subset=["Symbol"])
 
     numeric_cols = [
-        "EPS Growth TTM YoY",
-        "Revenue Growth TTM YoY",
-        "Reported EPS FY",
-        "Estimated EPS FY",
+        "EPS_Growth_TTM_YoY", "EPS Growth TTM YoY",
+        "Revenue_Growth_TTM_YoY", "Revenue Growth TTM YoY",
+        "Reported_EPS_FY", "Reported EPS FY",
+        "Estimated_EPS_FY", "Estimated EPS FY",
         "ROE",
-        "Target Price 1Y"
+        "EPS_Current_Quarter",
+        "EPS_Next_Quarter",
     ]
-
     for col in numeric_cols:
         if col in df.columns:
             df[col] = df[col].apply(clean_numeric)
@@ -249,26 +293,40 @@ def load_fundamentals():
     return df.set_index("Symbol").to_dict("index")
 
 # =========================
+# 재무 헬퍼
+# =========================
+def get_field(f, *keys):
+    for k in keys:
+        v = f.get(k)
+        if v is not None:
+            return v
+    return None
+
+def calc_qoq(cur_q, next_q):
+    try:
+        if cur_q is None or next_q is None:
+            return None
+        if pd.isna(cur_q) or pd.isna(next_q):
+            return None
+        if cur_q == 0:
+            return None
+        return float((next_q - cur_q) / abs(cur_q) * 100)
+    except:
+        return None
+
+# =========================
 # SCAN
 # =========================
 def scan():
     fund_map = load_fundamentals()
-
     if not fund_map:
-        print("[ERROR] 불러온 종목이 없습니다.")
+        print("[ERROR] 종목 없음")
         return
 
-    # 🔥 fund_map의 키를 tickers로 사용 (CSV 재읽기 방지)
     tickers = list(fund_map.keys())
+    buckets = {cat: [] for cat in CATEGORIES}
 
-    buckets = {
-        "돌파": [],
-        "눌림목": [],
-        "골든크로스": [],
-        "추세전환": []
-    }
-
-    print(f"[SCAN] tickers={len(tickers)} | SPY_RS={SPY_RET:.2f}%")
+    print(f"[SCAN] tickers={len(tickers)} | SPY={SPY_RET:.2f}%")
 
     for t in tickers:
         try:
@@ -276,9 +334,10 @@ def scan():
             if df is None or df.empty:
                 continue
 
-            rs = calc_rs(df)
-            vol_ratio = calc_vol_ratio(df)
-            signals = get_signals(df)
+            rs        = calc_rs(df)
+            vol_ratio = calc_vol_ratio(df) or 1.0
+            pos_52w   = calc_52w_position(df)
+            signals   = get_signals(df, vol_ratio)
 
             if not signals:
                 continue
@@ -286,86 +345,99 @@ def scan():
             current_price = float(df["Close"].iloc[-1])
 
             for s in signals:
+                # RS 필터
+                if not rs_pass(s, rs):
+                    continue
+
+                # 추세전환 거래량 필터
+                if s == "추세전환" and vol_ratio < TREND_REVERSAL_MIN_VOL:
+                    continue
+
+                # primary 지표
                 primary = momentum_20d(df) if s == "추세전환" else rs
 
-                if s == "추세전환":
-                    if vol_ratio is None or vol_ratio < TREND_REVERSAL_MIN_VOL_RATIO:
-                        continue
-
-                buckets[s].append((t, primary, vol_ratio, current_price))
+                buckets[s].append((t, primary, vol_ratio, current_price, pos_52w))
 
             time.sleep(0.2)
 
-        except Exception as e:
+        except:
             continue
 
-    print(f"[FILTER] 추세전환 거래량 < {TREND_REVERSAL_MIN_VOL_RATIO}x 제외")
-
-    scored_buckets = {}
-    for cat in ["돌파", "눌림목", "골든크로스", "추세전환"]:
-        scored_buckets[cat] = attach_composite_scores(buckets[cat], cat)
+    # 합성 점수 + 정렬
+    scored_buckets = {cat: attach_composite_scores(buckets[cat], cat) for cat in CATEGORIES}
 
     # =========================
     # 출력
     # =========================
+    cat_labels = {
+        "돌파_52W": "🏆 [돌파] 52주 신고가 🔥",
+        "돌파_50":  "🏆 [돌파] 50일 고가",
+        "돌파_20":  "🏆 [돌파] 20일 고가",
+        "눌림목":   "🏆 [눌림목]",
+        "골든크로스": "🏆 [골든크로스]",
+        "추세전환": "🏆 [추세전환]",
+    }
+
     msg = ""
 
-    for cat in ["돌파", "눌림목", "골든크로스", "추세전환"]:
-        msg += f"\n🏆 [{cat}]\n\n"
-
-        items = scored_buckets[cat]
+    for cat in CATEGORIES:
+        items = scored_buckets[cat][:MAX_PER_CATEGORY]
+        msg += f"\n{cat_labels[cat]}\n\n"
 
         if not items:
             msg += "없음\n"
             continue
 
-        label = "20D" if cat == "추세전환" else "RS"
-
-        for i, (t, primary, vol_ratio, current_price, composite) in enumerate(items, 1):
+        for i, (t, primary, vol_ratio, current_price, pos_52w, composite) in enumerate(items, 1):
             f = fund_map.get(t, {})
 
-            eps_yoy = f.get("EPS Growth TTM YoY")
-            rev_yoy = f.get("Revenue Growth TTM YoY")
-            reported_eps = f.get("Reported EPS FY")
-            estimated_eps = f.get("Estimated EPS FY")
-            roe = f.get("ROE")
-            target_price = f.get("Target Price 1Y")
+            eps_yoy = get_field(f, "EPS_Growth_TTM_YoY", "EPS Growth TTM YoY")
+            rev_yoy = get_field(f, "Revenue_Growth_TTM_YoY", "Revenue Growth TTM YoY")
+            rep_eps = get_field(f, "Reported_EPS_FY", "Reported EPS FY")
+            est_eps = get_field(f, "Estimated_EPS_FY", "Estimated EPS FY")
+            roe     = get_field(f, "ROE")
+            cur_q   = get_field(f, "EPS_Current_Quarter")
+            next_q  = get_field(f, "EPS_Next_Quarter")
+
+            qoq = calc_qoq(cur_q, next_q)
 
             eps_fwd = None
-            if pd.notna(reported_eps) and pd.notna(estimated_eps) and reported_eps != 0:
-                eps_fwd = ((estimated_eps - reported_eps) / abs(reported_eps)) * 100
+            if rep_eps and est_eps and not pd.isna(rep_eps) and not pd.isna(est_eps) and rep_eps != 0:
+                eps_fwd = ((est_eps - rep_eps) / abs(rep_eps)) * 100
 
-            tp = None
-            if pd.notna(target_price) and current_price > 0:
-                tp = ((target_price - current_price) / current_price) * 100
-
+            # 태그
             growth_tag = ""
-            if isinstance(eps_yoy, (int, float)) and eps_yoy > 200:
-                growth_tag = "🔥"
-            elif isinstance(eps_yoy, (int, float)) and isinstance(eps_fwd, (int, float)) and eps_yoy >= 10 and eps_fwd >= 10:
-                accel = eps_fwd / eps_yoy
-                growth_tag = "🚀" if accel >= 1.3 else "⚠️" if accel < 0.8 else "➡️"
+            if isinstance(eps_yoy, float) and not pd.isna(eps_yoy):
+                if eps_yoy > 200:
+                    growth_tag = "🔥"
+                elif isinstance(eps_fwd, float) and eps_yoy >= 10 and eps_fwd >= 10:
+                    accel = eps_fwd / eps_yoy
+                    growth_tag = "🚀" if accel >= 1.3 else "⚠️" if accel < 0.8 else "➡️"
+
+            qoq_tag = ""
+            if qoq is not None:
+                qoq_tag = "🚀" if qoq >= 50 else "✅" if qoq >= 20 else "➡️" if qoq >= 0 else "⚠️"
 
             rev_tag = ""
-            if isinstance(rev_yoy, (int, float)):
+            if isinstance(rev_yoy, float) and not pd.isna(rev_yoy):
                 rev_tag = "✅" if rev_yoy >= 10 else "⚠️"
 
-            rs_str = f"{primary:.1f}" if primary is not None else "N/A"
-            vol_str = f"{vol_ratio:.1f}x" if vol_ratio is not None else "N/A"
-            eps_str = f"{eps_yoy:.1f}%" if pd.notna(eps_yoy) else "N/A"
-            rev_str = f"{rev_yoy:.1f}%" if pd.notna(rev_yoy) else "N/A"
-            roe_str = f"{roe:.1f}%" if pd.notna(roe) else "N/A"
-            eps_fwd_str = f"{eps_fwd:.1f}%" if eps_fwd is not None else "N/A"
-            tp_str = f"{tp:.1f}%" if tp is not None else "N/A"
+            # 포맷
+            rs_str  = f"{primary:.1f}" if primary is not None else "N/A"
+            vol_str = f"{vol_ratio:.1f}x"
+            pos_str = f"{pos_52w:.0f}%" if pos_52w is not None else "N/A"
+            eps_str = f"{eps_yoy:.1f}%" if isinstance(eps_yoy, float) and not pd.isna(eps_yoy) else "N/A"
+            fwd_str = f"{eps_fwd:.1f}%" if eps_fwd is not None else "N/A"
+            qoq_str = f"{qoq:+.1f}%" if qoq is not None else "N/A"
+            rev_str = f"{rev_yoy:.1f}%" if isinstance(rev_yoy, float) and not pd.isna(rev_yoy) else "N/A"
+            roe_str = f"{roe:.1f}%" if isinstance(roe, float) and not pd.isna(roe) else "N/A"
 
             msg += (
-                f"{i}. [{t}](https://www.tradingview.com/symbols/{t}/)\n"
-                f"RS {rs_str} | VOL {vol_str}\n\n"
-                f"EPS {eps_str}\n"
-                f"FWD {eps_fwd_str} {growth_tag}\n\n"
-                f"REV {rev_str} {rev_tag}\n"
-                f"ROE {roe_str}\n"
-                f"TP {tp_str}\n\n"
+                f"{i}. {t} ${current_price:.1f} | 52W {pos_str}\n"
+                f"RS {rs_str} | VOL {vol_str}\n"
+                f"YoY {eps_str} {growth_tag} | FWD {fwd_str}\n"
+                f"QoQ {qoq_str} {qoq_tag}\n"
+                f"REV {rev_str} {rev_tag} | ROE {roe_str}\n\n"
             )
 
     print(msg)
