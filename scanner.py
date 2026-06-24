@@ -22,6 +22,10 @@ VOL_BREAK_50  = 1.3
 VOL_BREAK_52W = 1.5
 TREND_REVERSAL_MIN_VOL = 1.3
 
+# 눌림목 조건
+PULLBACK_MA20_RANGE = 0.03   # 20일선 3% 이내
+# above_ma50 조건은 get_signals 내부에서 직접 체크
+
 REVERSAL_CATS = {"추세전환"}
 SUPERTREND_CATS = {"돌파_52W", "돌파_50", "돌파_20", "눌림목", "골든크로스"}
 
@@ -239,6 +243,7 @@ def get_signals(df, vol_ratio):
 
         signals = []
 
+        # 돌파 (거래량 조건 포함)
         if c_last > high52_prev and vol_ratio >= VOL_BREAK_52W:
             signals.append("돌파_52W")
         elif c_last > high50_prev and vol_ratio >= VOL_BREAK_50:
@@ -246,12 +251,21 @@ def get_signals(df, vol_ratio):
         elif c_last > high20_prev and vol_ratio >= VOL_BREAK_20:
             signals.append("돌파_20")
 
-        if ma20_last > ma50_last and c_last < ma20_last:
+        # 🔥 눌림목 (수정)
+        # 조건 1: MA20 > MA50 (상승 추세 유지)
+        # 조건 2: 현재가 < MA20 (20일선 아래로 눌림)
+        # 조건 3: MA20 3% 이내 (너무 많이 빠진 건 제외 → 50일선 근처까지 빠진 것도 제외)
+        # 조건 4: 현재가 > MA50 (50일선은 아직 위에 있어야 함)
+        near_ma20  = abs(c_last - ma20_last) / ma20_last < PULLBACK_MA20_RANGE
+        above_ma50 = c_last > ma50_last
+        if ma20_last > ma50_last and c_last < ma20_last and near_ma20 and above_ma50:
             signals.append("눌림목")
 
+        # 골든크로스
         if ma20_prev <= ma50_prev and ma20_last > ma50_last:
             signals.append("골든크로스")
 
+        # 추세전환
         if ma20_prev > ma50_prev and ma20_last > ma50_last and c_last > ma20_last:
             signals.append("추세전환")
 
@@ -443,6 +457,7 @@ def scan():
     buckets = {cat: [] for cat in CATEGORIES}
 
     print(f"[SCAN] tickers={len(tickers)} | SPY={SPY_RET:.2f}%")
+    print(f"[INFO] 눌림목 조건: MA20 3% 이내 + MA50 위")
 
     for t in tickers:
         try:
@@ -480,11 +495,10 @@ def scan():
         except:
             continue
 
-    # fund_map 전달하여 미래EPS 감점 적용
     scored_buckets = {cat: attach_composite_scores(buckets[cat], cat, fund_map) for cat in CATEGORIES}
 
     # =========================
-    # 전체 종합순위 수집
+    # 전체 종합순위
     # =========================
     cat_short = {
         "돌파_52W": "돌파 52W",
