@@ -96,6 +96,38 @@ def extract_ticker(raw_symbol: str) -> str:
     return ticker.strip()
 
 # =========================
+# RS 태그
+# =========================
+def get_rs_tag(rs):
+    if rs is None:
+        return "📊 데이터부족"
+    if rs >= 50:
+        return "🔥 시장압도"
+    elif rs >= 20:
+        return "💪 시장대비강함"
+    elif rs >= 0:
+        return "➖ 시장수준"
+    else:
+        return "⚠️ 시장대비약함"
+
+# =========================
+# 거래량 태그
+# =========================
+def get_vol_tag(vol_ratio):
+    if vol_ratio is None:
+        return "📊 데이터부족"
+    if vol_ratio >= 2.0:
+        return "🔥 폭발적"
+    elif vol_ratio >= 1.5:
+        return "💪 강한거래량"
+    elif vol_ratio >= 1.2:
+        return "✅ 평균이상"
+    elif vol_ratio >= 0.8:
+        return "➖ 평균수준"
+    else:
+        return "⚠️ 거래량부족"
+
+# =========================
 # 재무 태깅 엔진
 # =========================
 
@@ -251,11 +283,7 @@ def get_signals(df, vol_ratio):
         elif c_last > high20_prev and vol_ratio >= VOL_BREAK_20:
             signals.append("돌파_20")
 
-        # 🔥 눌림목 (수정)
-        # 조건 1: MA20 > MA50 (상승 추세 유지)
-        # 조건 2: 현재가 < MA20 (20일선 아래로 눌림)
-        # 조건 3: MA20 3% 이내 (너무 많이 빠진 건 제외 → 50일선 근처까지 빠진 것도 제외)
-        # 조건 4: 현재가 > MA50 (50일선은 아직 위에 있어야 함)
+        # 눌림목
         near_ma20  = abs(c_last - ma20_last) / ma20_last < PULLBACK_MA20_RANGE
         above_ma50 = c_last > ma50_last
         if ma20_last > ma50_last and c_last < ma20_last and near_ma20 and above_ma50:
@@ -556,10 +584,17 @@ def scan():
             if rep_eps and est_eps and not pd.isna(rep_eps) and not pd.isna(est_eps) and rep_eps != 0:
                 eps_fwd = ((est_eps - rep_eps) / abs(rep_eps)) * 100
 
+            # RS 값 결정 (추세전환은 primary가 20일 모멘텀이므로 rs 별도 사용)
+            rs_val = primary if cat != "추세전환" else calc_rs(
+                yf.download(t, period="1y", auto_adjust=True, progress=False)
+            ) if False else primary  # 추세전환도 primary 사용 (모멘텀 기준)
+
             sector       = get_sector(t)
             growth_tag   = get_growth_tag(eps_yoy, rev_yoy, qoq)
             momentum_tag = get_momentum_tag(qoq)
             future_tag   = get_future_tag(eps_fwd, eps_yoy)
+            rs_tag       = get_rs_tag(primary)
+            vol_tag      = get_vol_tag(vol_ratio)
 
             rs_str  = f"{primary:.1f}" if primary is not None else "N/A"
             vol_str = f"{vol_ratio:.1f}x"
@@ -579,7 +614,7 @@ def scan():
                 f"📊 {finviz_url}\n"
                 f"📈 {tv_url}\n"
                 f"\n"
-                f"RS {rs_str} | VOL {vol_str}\n"
+                f"RS {rs_str} {rs_tag} | VOL {vol_str} {vol_tag}\n"
                 f"\n"
                 f"올해EPS {eps_str} → 내년EPS {fwd_str} | 다음분기EPS {qoq_str}\n"
                 f"매출성장 {rev_str} | 자기자본이익률 {roe_str}\n"
