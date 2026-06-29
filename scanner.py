@@ -16,15 +16,22 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 MAX_PER_CATEGORY = 5
+MAX_VCP = 10
 
 VOL_BREAK_20  = 1.2
 VOL_BREAK_50  = 1.3
 VOL_BREAK_52W = 1.5
 TREND_REVERSAL_MIN_VOL = 1.3
 
-# 눌림목 조건
-PULLBACK_MA20_RANGE = 0.03   # 20일선 3% 이내
-# above_ma50 조건은 get_signals 내부에서 직접 체크
+PULLBACK_MA20_RANGE = 0.03
+
+# =========================
+# VCP 조건 설정
+# =========================
+VCP_ADR_LOOKBACK    = 20
+VCP_TIGHTNESS_BARS  = 5
+VCP_TIGHTNESS_RATIO = 0.6
+VCP_VOL_DRYUP_RATIO = 0.8
 
 REVERSAL_CATS = {"추세전환"}
 SUPERTREND_CATS = {"돌파_52W", "돌파_50", "돌파_20", "눌림목", "골든크로스"}
@@ -83,9 +90,6 @@ def get_sector(ticker):
     except:
         return ""
 
-# =========================
-# 티커 추출 (소문자 직전 대문자 1개 제거)
-# =========================
 def extract_ticker(raw_symbol: str) -> str:
     raw_symbol = raw_symbol.strip()
     m = re.search(r'[a-z]', raw_symbol)
@@ -95,9 +99,6 @@ def extract_ticker(raw_symbol: str) -> str:
         ticker = raw_symbol.split()[0]
     return ticker.strip()
 
-# =========================
-# RS 태그
-# =========================
 def get_rs_tag(rs):
     if rs is None:
         return "📊 데이터부족"
@@ -110,9 +111,6 @@ def get_rs_tag(rs):
     else:
         return "⚠️ 시장대비약함"
 
-# =========================
-# 거래량 태그
-# =========================
 def get_vol_tag(vol_ratio):
     if vol_ratio is None:
         return "📊 데이터부족"
@@ -126,10 +124,6 @@ def get_vol_tag(vol_ratio):
         return "➖ 평균수준"
     else:
         return "⚠️ 거래량부족"
-
-# =========================
-# 재무 태깅 엔진
-# =========================
 
 def get_growth_tag(yoy, rev, qoq):
     try:
@@ -176,9 +170,6 @@ def get_future_tag(fwd, yoy):
     except:
         return "❌ 오류"
 
-# =========================
-# 텔레그램
-# =========================
 def send_telegram(msg):
     try:
         requests.post(
@@ -189,9 +180,6 @@ def send_telegram(msg):
     except:
         pass
 
-# =========================
-# SPY 기준
-# =========================
 def get_spy_return():
     try:
         spy = yf.download("SPY", period="1y", auto_adjust=True, progress=False)
@@ -204,9 +192,6 @@ def get_spy_return():
 
 SPY_RET = get_spy_return()
 
-# =========================
-# RS 계산
-# =========================
 def calc_rs(df):
     try:
         close = df["Close"]
@@ -215,9 +200,6 @@ def calc_rs(df):
     except:
         return None
 
-# =========================
-# 거래량 비율
-# =========================
 def calc_vol_ratio(df):
     try:
         vol = df["Volume"]
@@ -230,9 +212,6 @@ def calc_vol_ratio(df):
     except:
         return None
 
-# =========================
-# 52주 고가 대비 이격율
-# =========================
 def calc_52w_position(ticker, current_price):
     try:
         t = yf.Ticker(ticker)
@@ -244,18 +223,12 @@ def calc_52w_position(ticker, current_price):
     except:
         return None
 
-# =========================
-# 20일 모멘텀
-# =========================
 def momentum_20d(df):
     try:
         return float((df["Close"].iloc[-1].item() / df["Close"].iloc[-20].item() - 1) * 100)
     except:
         return None
 
-# =========================
-# 신호 감지
-# =========================
 def get_signals(df, vol_ratio):
     try:
         close  = df["Close"]
@@ -275,7 +248,6 @@ def get_signals(df, vol_ratio):
 
         signals = []
 
-        # 돌파 (거래량 조건 포함)
         if c_last > high52_prev and vol_ratio >= VOL_BREAK_52W:
             signals.append("돌파_52W")
         elif c_last > high50_prev and vol_ratio >= VOL_BREAK_50:
@@ -283,17 +255,14 @@ def get_signals(df, vol_ratio):
         elif c_last > high20_prev and vol_ratio >= VOL_BREAK_20:
             signals.append("돌파_20")
 
-        # 눌림목
         near_ma20  = abs(c_last - ma20_last) / ma20_last < PULLBACK_MA20_RANGE
         above_ma50 = c_last > ma50_last
         if ma20_last > ma50_last and c_last < ma20_last and near_ma20 and above_ma50:
             signals.append("눌림목")
 
-        # 골든크로스
         if ma20_prev <= ma50_prev and ma20_last > ma50_last:
             signals.append("골든크로스")
 
-        # 추세전환
         if ma20_prev > ma50_prev and ma20_last > ma50_last and c_last > ma20_last:
             signals.append("추세전환")
 
@@ -302,8 +271,61 @@ def get_signals(df, vol_ratio):
         return []
 
 # =========================
-# RS 필터
+# VCP 조건 체크
 # =========================
+def check_vcp(df):
+    try:
+        close  = df["Close"]
+        high   = df["High"]
+        low    = df["Low"]
+        volume = df["Volume"]
+
+        if len(df) < VCP_ADR_LOOKBACK + VCP_TIGHTNESS_BARS + 5:
+            return False, None, None
+
+        ma20 = close.rolling(20).mean()
+        ma50 = close.rolling(50).mean()
+
+        c_last    = close.iloc[-1].item()
+        ma20_last = ma20.iloc[-1].item()
+        ma50_last = ma50.iloc[-1].item()
+
+        # 조건 1: 정배열
+        if not (ma20_last > ma50_last and c_last > ma20_last):
+            return False, None, None
+
+        # ADR 계산
+        recent_adr = df.iloc[-(VCP_ADR_LOOKBACK + VCP_TIGHTNESS_BARS):-VCP_TIGHTNESS_BARS]
+        daily_ranges = ((recent_adr["High"] - recent_adr["Low"]) / recent_adr["Low"] * 100)
+        adr = float(daily_ranges.mean())
+
+        if adr <= 0:
+            return False, None, None
+
+        # 조건 2: 가격 압축
+        tight_window = df.iloc[-VCP_TIGHTNESS_BARS:]
+        spread = float(
+            (tight_window["High"].max() - tight_window["Low"].min())
+            / tight_window["Low"].min() * 100
+        )
+        tightness_score = spread / adr
+
+        if tightness_score > VCP_TIGHTNESS_RATIO:
+            return False, tightness_score, None
+
+        # 조건 3: 거래량 드라이업
+        vol_avg20  = float(volume.iloc[-21:-1].mean())
+        vol_recent = float(volume.iloc[-VCP_TIGHTNESS_BARS:].mean())
+        vol_dryup  = vol_recent / vol_avg20 if vol_avg20 > 0 else 1.0
+
+        if vol_dryup > VCP_VOL_DRYUP_RATIO:
+            return False, tightness_score, vol_dryup
+
+        return True, tightness_score, vol_dryup
+
+    except:
+        return False, None, None
+
 def rs_pass(cat, rs):
     min_rs = RS_MIN.get(cat)
     if min_rs is None:
@@ -312,9 +334,6 @@ def rs_pass(cat, rs):
         return False
     return rs >= min_rs
 
-# =========================
-# 퍼센타일 랭크
-# =========================
 def percentile_rank(vals):
     idx_vals = [(i, v) for i, v in enumerate(vals) if v is not None]
     idx_vals.sort(key=lambda x: x[1])
@@ -324,9 +343,6 @@ def percentile_rank(vals):
         out[i] = (rank / (n - 1) * 100) if n > 1 else 50.0
     return out
 
-# =========================
-# 합성 점수 (미래EPS 하향 시 30% 감점)
-# =========================
 def attach_composite_scores(items, category, fund_map=None):
     if not items:
         return []
@@ -351,7 +367,6 @@ def attach_composite_scores(items, category, fund_map=None):
             v_pct = 100.0 - v_pct
         composite = rs_w * p_pct + vol_w * v_pct
 
-        # 미래EPS 하향 시 30% 감점
         if fund_map is not None:
             f = fund_map.get(ticker, {})
             rep_eps = f.get("Reported_EPS_FY") or f.get("Reported EPS FY")
@@ -375,9 +390,6 @@ def attach_composite_scores(items, category, fund_map=None):
     scored.sort(key=lambda x: x[5], reverse=True)
     return scored
 
-# =========================
-# CSV 클리너
-# =========================
 def clean_numeric(val):
     if isinstance(val, str):
         val = val.replace('%', '').replace('$', '').replace(',', '').strip()
@@ -393,9 +405,6 @@ def clean_numeric(val):
             return float('nan')
     return val
 
-# =========================
-# CSV 재무 데이터 로드
-# =========================
 def load_fundamentals():
     fund_map = {}
     ticker_source = {}
@@ -450,9 +459,6 @@ def load_fundamentals():
 
     return fund_map, ticker_source
 
-# =========================
-# 재무 헬퍼
-# =========================
 def get_field(f, *keys):
     for k in keys:
         v = f.get(k)
@@ -473,6 +479,59 @@ def calc_qoq(cur_q, next_q):
         return None
 
 # =========================
+# VCP 텔레그램 메시지
+# =========================
+def build_vcp_message(vcp_results, fund_map):
+    if not vcp_results:
+        return "📦 VCP 후보군\n\n없음"
+
+    vcp_results.sort(key=lambda x: x[1] if x[1] is not None else -999, reverse=True)
+    vcp_results = vcp_results[:MAX_VCP]
+
+    msg = "📦 VCP 후보군 (압축 감시 목록)\n"
+    msg += "━━━━━━━━━━━━━━━━\n\n"
+
+    for i, (t, rs, tightness, vol_dryup, price, pos_52w) in enumerate(vcp_results, 1):
+        f = fund_map.get(t, {})
+        sector = get_sector(t)
+
+        eps_yoy = get_field(f, "EPS_Growth_TTM_YoY", "EPS Growth TTM YoY")
+        rev_yoy = get_field(f, "Revenue_Growth_TTM_YoY", "Revenue Growth TTM YoY")
+        cur_q   = get_field(f, "EPS_Current_Quarter")
+        next_q  = get_field(f, "EPS_Next_Quarter")
+        qoq     = calc_qoq(cur_q, next_q)
+
+        rs_tag     = get_rs_tag(rs)
+        growth_tag = get_growth_tag(eps_yoy, rev_yoy, qoq)
+
+        rs_str     = f"{rs:.1f}" if rs is not None else "N/A"
+        tight_str  = f"{tightness:.2f}x" if tightness is not None else "N/A"
+        dryup_str  = f"{vol_dryup:.2f}x" if vol_dryup is not None else "N/A"
+        pos_str    = f"{pos_52w:+.1f}%" if pos_52w is not None else "N/A"
+        eps_str    = f"{eps_yoy:.1f}%" if isinstance(eps_yoy, float) and not pd.isna(eps_yoy) else "N/A"
+        rev_str    = f"{rev_yoy:.1f}%" if isinstance(rev_yoy, float) and not pd.isna(rev_yoy) else "N/A"
+        sector_str = f" | {sector}" if sector else ""
+
+        finviz_url = f"https://finviz.com/quote.ashx?t={t}"
+        tv_url     = f"https://kr.tradingview.com/chart/?symbol={t}"
+
+        msg += (
+            f"{i}. {t} | ${price:.1f} | 52W {pos_str}{sector_str}\n"
+            f"📊 {finviz_url}\n"
+            f"📈 {tv_url}\n"
+            f"\n"
+            f"RS {rs_str} {rs_tag}\n"
+            f"압축도 {tight_str} | 거래량 드라이업 {dryup_str}\n"
+            f"\n"
+            f"EPS {eps_str} | 매출 {rev_str}\n"
+            f"🏷️ {growth_tag}\n\n"
+        )
+
+    msg += "━━━━━━━━━━━━━━━━\n"
+    msg += "⚠️ 피벗 돌파 + 거래량 확인 후 진입"
+    return msg
+
+# =========================
 # SCAN
 # =========================
 def scan():
@@ -483,9 +542,11 @@ def scan():
 
     tickers = list(fund_map.keys())
     buckets = {cat: [] for cat in CATEGORIES}
+    vcp_candidates = []
 
     print(f"[SCAN] tickers={len(tickers)} | SPY={SPY_RET:.2f}%")
     print(f"[INFO] 눌림목 조건: MA20 3% 이내 + MA50 위")
+    print(f"[INFO] VCP 조건: 정배열 + 압축비 <{VCP_TIGHTNESS_RATIO} + 거래량 드라이업 <{VCP_VOL_DRYUP_RATIO}")
 
     for t in tickers:
         try:
@@ -500,23 +561,25 @@ def scan():
             signals       = get_signals(df, vol_ratio)
             source        = ticker_source.get(t, "reversal")
 
-            if not signals:
-                continue
+            # 기존 버킷 처리
+            if signals:
+                for s in signals:
+                    if source == "reversal" and s not in REVERSAL_CATS:
+                        continue
+                    if source == "supertrend" and s not in SUPERTREND_CATS:
+                        continue
+                    if not rs_pass(s, rs):
+                        continue
+                    if s == "추세전환" and vol_ratio < TREND_REVERSAL_MIN_VOL:
+                        continue
+                    primary = momentum_20d(df) if s == "추세전환" else rs
+                    buckets[s].append((t, primary, vol_ratio, current_price, pos_52w))
 
-            for s in signals:
-                if source == "reversal" and s not in REVERSAL_CATS:
-                    continue
-                if source == "supertrend" and s not in SUPERTREND_CATS:
-                    continue
-
-                if not rs_pass(s, rs):
-                    continue
-
-                if s == "추세전환" and vol_ratio < TREND_REVERSAL_MIN_VOL:
-                    continue
-
-                primary = momentum_20d(df) if s == "추세전환" else rs
-                buckets[s].append((t, primary, vol_ratio, current_price, pos_52w))
+            # VCP 후보군 체크 (supertrend 종목만)
+            if source == "supertrend":
+                vcp_pass, tightness, vol_dryup = check_vcp(df)
+                if vcp_pass:
+                    vcp_candidates.append((t, rs, tightness, vol_dryup, current_price, pos_52w))
 
             time.sleep(0.2)
 
@@ -526,7 +589,7 @@ def scan():
     scored_buckets = {cat: attach_composite_scores(buckets[cat], cat, fund_map) for cat in CATEGORIES}
 
     # =========================
-    # 전체 종합순위
+    # 기존 메시지 전송
     # =========================
     cat_short = {
         "돌파_52W": "돌파 52W",
@@ -584,11 +647,6 @@ def scan():
             if rep_eps and est_eps and not pd.isna(rep_eps) and not pd.isna(est_eps) and rep_eps != 0:
                 eps_fwd = ((est_eps - rep_eps) / abs(rep_eps)) * 100
 
-            # RS 값 결정 (추세전환은 primary가 20일 모멘텀이므로 rs 별도 사용)
-            rs_val = primary if cat != "추세전환" else calc_rs(
-                yf.download(t, period="1y", auto_adjust=True, progress=False)
-            ) if False else primary  # 추세전환도 primary 사용 (모멘텀 기준)
-
             sector       = get_sector(t)
             growth_tag   = get_growth_tag(eps_yoy, rev_yoy, qoq)
             momentum_tag = get_momentum_tag(qoq)
@@ -624,6 +682,13 @@ def scan():
 
     print(msg)
     send_telegram(msg)
+
+    # =========================
+    # VCP 후보군 별도 전송
+    # =========================
+    vcp_msg = build_vcp_message(vcp_candidates, fund_map)
+    print(vcp_msg)
+    send_telegram(vcp_msg)
 
 # =========================
 # RUN
