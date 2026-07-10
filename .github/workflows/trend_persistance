@@ -1,0 +1,44 @@
+name: US Market Scanner
+
+on:
+  schedule:
+
+    # ① 장전 (14:00 KST)
+    - cron: '0 5 * * 1-5'
+
+    # ② 장마감 1시간 전 (05:00 KST)
+    - cron: '0 20 * * 1-5'
+
+    # ③ 종가 확정 후 (06:30 KST)
+    - cron: '30 21 * * 1-5'
+
+  workflow_dispatch:
+
+jobs:
+  scanner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Scanner
+        run: |
+          python scanner.py
+
+      - name: Commit Cache
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add .
+          git diff --cached --quiet || git commit -m "update cache"
+          git push
