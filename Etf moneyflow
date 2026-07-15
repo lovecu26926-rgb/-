@@ -1,0 +1,341 @@
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import requests
+import os
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# 섹터 머니플로우 판단용 워치리스트 (SPDR 11개 섹터 + 반도체 세부섹터)
+WATCHLIST = [
+    "XLK",   # 기술
+    "SOXX",  # 반도체 (XLK 하위 세부섹터)
+    "XLF",   # 금융
+    "XLE",   # 에너지
+    "XLI",   # 산업재
+    "XLV",   # 헬스케어
+    "XLY",   # 경기소비재
+    "XLP",   # 필수소비재
+    "XLU",   # 유틸리티
+    "XLB",   # 소재
+    "XLRE",  # 부동산
+    "XLC",   # 통신
+]
+
+# 공포탐욕지수 계산용 보조 티커
+FEAR_GREED_TICKERS = ["SPY", "^VIX", "TLT", "HYG", "LQD", "RSP"]
+
+
+def send_telegram(msg):
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+            timeout=10
+        )
+    except:
+        pass
+
+
+# -------------------------------------------------
+# 이동평균
+# -------------------------------------------------
+def add_ma(df):
+    df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
+    df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
+    df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
+    return df
+
+
+# -------------------------------------------------
+# RS 계산 (SPY 대비)
+# -------------------------------------------------
+def add_rs(df, spy_df):
+    stock_ret = df["Close"].pct_change(252)
+    spy_ret = spy_df["Close"].pct_change(252)
+    rs = (stock_ret - spy_ret) * 100
+    df["RS"] = rs.reindex(df.index)
+    return df
+
+
+# -------------------------------------------------
+# 거래량 비율
+# -------------------------------------------------
+def add_volume_ratio(df):
+    df["VOL_RATIO"] = df["Volume"] / df["Volume"].rolling(20).mean()
+    return df
+
+
+# -------------------------------------------------
+# Chaikin Money Flow (자금 유입/유출)
+# -------------------------------------------------
+def add_cmf(df, period=20):
+    high_low = (df["High"] - df["Low"]).replace(0, np.nan)
+    mfm = ((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / high_low
+    mfv = mfm * df["Volume"]
+    df["CMF"] = mfv.rolling(period).sum() / df["Volume"].rolling(period).sum()
+    return df
+
+
+def cmf_tag(cmf):
+    if cmf is None or pd.isna(cmf):
+        return "📊 데이터부족"
+    if cmf >= 0.15:
+        return "🟢🟢 강한 자금유입"
+    elif cmf >= 0.05:
+        return "🟢 자금유입"
+    elif cmf > -0.05:
+        return "⚪ 중립"
+    elif cmf > -0.15:
+        return "🔴 자금유출"
+    else:
+        return "🔴🔴 강한 자금유출"
+
+
+# -------------------------------------------------
+# 시그널
+# -------------------------------------------------
+def breakout_signal(df):
+    high_50 = df["High"].rolling(50).max()
+    return (
+        (df["Close"] >= high_50.shift(1) * 0.995)
+        & (df["Volume"] > df["Volume"].rolling(20).mean() * 1.5)
+        & (df["EMA20"] > df["EMA50"])
+        & (df["EMA50"] > df["EMA200"])
+        & (df["RS"] > 0)
+    )
+
+
+def pullback20_signal(df):
+    dist20 = abs(df["Close"] / df["EMA20"] - 1)
+    return (
+        (df["EMA20"] > df["EMA50"])
+        & (df["EMA50"] > df["EMA200"])
+        & (dist20 <= 0.03)
+        & (df["Close"] > df["EMA20"])
+        & (df["RS"] > 0)
+    )
+
+
+def pullback50_signal(df):
+    dist50 = abs(df["Close"] / df["EMA50"] - 1)
+    return (
+        (df["EMA20"] > df["EMA50"])
+        & (df["EMA50"] > df["EMA200"])
+        & (dist50 <= 0.05)
+        & (df["Close"] > df["EMA50"])
+        & (df["RS"] > 0)
+    )
+
+
+def classify(df):
+    b = breakout_signal(df)
+    p20 = pullback20_signal(df)
+    p50 = pullback50_signal(df)
+    latest = len(df) - 1
+
+    if b.iloc[latest]:
+        return "🚀 돌파(전고돌파)"
+    if p20.iloc[latest]:
+        return "🟢 20일선 눌림목"
+    if p50.iloc[latest]:
+        return "🟡 50일선 눌림목"
+    return "⚪ 해당없음"
+
+
+def analyze_ticker(ticker, spy_df):
+    df = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    if len(df) < 220:
+        return None
+
+    df = add_ma(df)
+    df = add_rs(df, spy_df)
+    df = add_volume_ratio(df)
+    df = add_cmf(df)
+
+    latest = df.iloc[-1]
+    dist20 = (latest["Close"] / latest["EMA20"] - 1) * 100
+    dist50 = (latest["Close"] / latest["EMA50"] - 1) * 100
+
+    # 정배열 여부 (마켓 진입/이탈 판단 핵심)
+    uptrend = bool(latest["EMA20"] > latest["EMA50"] > latest["EMA200"])
+    cmf_val = float(latest["CMF"]) if not pd.isna(latest["CMF"]) else None
+
+    return {
+        "ticker": ticker,
+        "category": classify(df),
+        "uptrend": uptrend,
+        "close": round(float(latest["Close"]), 2),
+        "dist20": round(float(dist20), 1),
+        "dist50": round(float(dist50), 1),
+        "rs": round(float(latest["RS"]), 1),
+        "vol_ratio": round(float(latest["VOL_RATIO"]), 2),
+        "cmf": round(cmf_val, 3) if cmf_val is not None else None,
+    }
+
+
+# -------------------------------------------------
+# 공포탐욕지수 (CNN/CNBC 근사치)
+# -------------------------------------------------
+def clip_scale(value, lo, hi):
+    """value를 [lo, hi] 구간 기준으로 0~100 스케일로 변환"""
+    if value is None or pd.isna(value):
+        return 50.0
+    pct = (value - lo) / (hi - lo) * 100
+    return float(np.clip(pct, 0, 100))
+
+
+def pct_return(df, days):
+    try:
+        return float(df["Close"].iloc[-1] / df["Close"].iloc[-days] - 1) * 100
+    except:
+        return None
+
+
+def fetch_fg_data():
+    data = {}
+    for t in FEAR_GREED_TICKERS:
+        try:
+            df = yf.download(t, period="1y", interval="1d", progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            data[t] = df
+        except:
+            data[t] = None
+    return data
+
+
+def calc_fear_greed(data):
+    spy = data.get("SPY")
+    vix = data.get("^VIX")
+    tlt = data.get("TLT")
+    hyg = data.get("HYG")
+    lqd = data.get("LQD")
+    rsp = data.get("RSP")
+
+    scores = {}
+
+    # 1. 모멘텀: SPY 종가 vs 125일 이평 괴리율
+    try:
+        spy_ma125 = spy["Close"].rolling(125).mean().iloc[-1]
+        spy_last = spy["Close"].iloc[-1]
+        momentum_pct = float((spy_last / spy_ma125 - 1) * 100)
+        scores["모멘텀"] = clip_scale(momentum_pct, -10, 10)
+    except:
+        scores["모멘텀"] = 50.0
+
+    # 2. 변동성: VIX / VIX 50일 평균 (역방향)
+    try:
+        vix_ma50 = vix["Close"].rolling(50).mean().iloc[-1]
+        vix_last = vix["Close"].iloc[-1]
+        vix_ratio = float(vix_last / vix_ma50)
+        # ratio 0.7 -> 탐욕(100), 1.5 -> 공포(0)
+        scores["변동성"] = clip_scale(-vix_ratio, -1.5, -0.7)
+    except:
+        scores["변동성"] = 50.0
+
+    # 3. 안전자산 선호: SPY 20일 수익률 - TLT 20일 수익률
+    try:
+        diff = pct_return(spy, 20) - pct_return(tlt, 20)
+        scores["안전자산선호"] = clip_scale(diff, -10, 10)
+    except:
+        scores["안전자산선호"] = 50.0
+
+    # 4. 정크본드 수요: HYG 20일 - LQD 20일
+    try:
+        diff = pct_return(hyg, 20) - pct_return(lqd, 20)
+        scores["정크본드수요"] = clip_scale(diff, -5, 5)
+    except:
+        scores["정크본드수요"] = 50.0
+
+    # 5. 시장 참여폭: RSP(동일가중) 20일 - SPY 20일
+    try:
+        diff = pct_return(rsp, 20) - pct_return(spy, 20)
+        scores["시장참여폭"] = clip_scale(diff, -5, 5)
+    except:
+        scores["시장참여폭"] = 50.0
+
+    composite = round(sum(scores.values()) / len(scores), 1)
+    return composite, scores
+
+
+def fg_label(score):
+    if score < 25:
+        return "😱 극단적 공포"
+    elif score < 45:
+        return "😟 공포"
+    elif score < 55:
+        return "😐 중립"
+    elif score < 75:
+        return "😏 탐욕"
+    else:
+        return "🤑 극단적 탐욕"
+
+
+# -------------------------------------------------
+# 메시지 빌드
+# -------------------------------------------------
+SECTOR_NAMES = {
+    "XLK": "기술", "SOXX": "반도체", "XLF": "금융", "XLE": "에너지",
+    "XLI": "산업재", "XLV": "헬스케어", "XLY": "경기소비재", "XLP": "필수소비재",
+    "XLU": "유틸리티", "XLB": "소재", "XLRE": "부동산", "XLC": "통신",
+}
+
+
+def build_message(results, fg_score, fg_scores):
+    # RS 기준 내림차순 = 자금이 상대적으로 몰리는 순서
+    ranked = sorted(results, key=lambda r: r["rs"], reverse=True)
+
+    msg = "💰 섹터 머니플로우 랭킹\n"
+    msg += "━━━━━━━━━━━━━━━━\n\n"
+
+    for i, r in enumerate(ranked, 1):
+        name = SECTOR_NAMES.get(r["ticker"], r["ticker"])
+        trend_tag = "🟢 정배열" if r["uptrend"] else "🔴 역배열"
+        flow_tag = cmf_tag(r["cmf"])
+        cmf_str = f"{r['cmf']:+.3f}" if r["cmf"] is not None else "N/A"
+
+        msg += (
+            f"{i}. {r['ticker']} ({name}) ${r['close']}\n"
+            f"RS {r['rs']:+.1f} | {trend_tag}\n"
+            f"CMF {cmf_str} {flow_tag}\n"
+            f"{r['category']}\n\n"
+        )
+
+    msg += "━━━━━━━━━━━━━━━━\n"
+    msg += f"😨 시장 전체 공포탐욕지수: {fg_score:.0f} {fg_label(fg_score)}\n\n"
+    for k, v in fg_scores.items():
+        msg += f"  · {k}: {v:.0f}\n"
+    msg += "\n※ CMF(Chaikin Money Flow)는 가격·거래량 기반 자금유출입 근사 지표\n"
+    msg += "※ 공포탐욕지수는 CNN/CNBC 공식 산출방식과 다른 근사치"
+
+    return msg
+
+
+# -------------------------------------------------
+# 실행
+# -------------------------------------------------
+def run():
+    spy_df = yf.download("SPY", period="1y", interval="1d", progress=False, auto_adjust=True)
+    if isinstance(spy_df.columns, pd.MultiIndex):
+        spy_df.columns = spy_df.columns.get_level_values(0)
+
+    results = []
+    for ticker in WATCHLIST:
+        result = analyze_ticker(ticker, spy_df)
+        if result:
+            results.append(result)
+
+    fg_data = fetch_fg_data()
+    fg_score, fg_scores = calc_fear_greed(fg_data)
+
+    msg = build_message(results, fg_score, fg_scores)
+    print(msg)
+    send_telegram(msg)
+
+
+if __name__ == "__main__":
+    run()
